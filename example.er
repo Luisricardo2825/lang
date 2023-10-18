@@ -1,10 +1,7 @@
-const nome = "Ricardo" // Inicia a variavel com o valor Ricardo
+let count = -1;
 
-print("Olá "+nome) // Imprime o valor de Ricardo
-
-for index in 5 {   // Inicia a variavel "index" com o valor 0 
-    for j in 2 {
-        print(nome+" Contagem "+j+1); // Imprime o "nome" e a contagem de "j"
-    };
-    print("Finished: " + (index+1) +" From: " +5); // Imprime o valor para cada iteração de "index"
+for i in 0..5 {
+    let count = i+1;
+    print("Id:"+count)
 }
+print(count)

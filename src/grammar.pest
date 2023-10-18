@@ -3,9 +3,9 @@ program = _{ SOI ~ code ~ EOI }
 code = _{ NEWLINE* ~ (expr ~ ";"? ~ NEWLINE+)* ~ expr? }
 // Expression(Generic)
 expr = {
-    keywords
+    assgmtExpr
+  | keywords
   | functions
-  | assgmtExpr
   | monadicExpr
   | dyadicExpr
   | value
@@ -23,9 +23,10 @@ functions = {
 
 stmt    = {
     "const"
+  | "let"
   | "for"
 }
-print   = { "print" ~ "(" ~ expr ~ ")" }
+print   = { "print" ~ "(" ~ code ~ ")" }
 forLoop = { stmt ~ ident ~ "in" ~ expr ~ "{" ~ code ~ "}" }
 
 // expressions(Logic)
@@ -43,10 +44,12 @@ term = _{ ident | "(" ~ expr ~ ")" }
 
 // Variables
 
-assgmtExpr = { stmt ~ ident ~ "=" ~ expr }
+modifier   = { "const" | "let" | "" }
+assgmtExpr = { modifier ~ ident ~ "=" ~ expr }
 
 verb = {
     plus
+  | multiply
   | increment
   | decrement
   | and
@@ -58,11 +61,16 @@ verb = {
   | gte
   | eq
   | neq
+  | range
+  | objectAccess
 }
 // operators
-plus      = { "+" }
-increment = { "++" }
-decrement = { "--" }
+plus         = { "+" }
+multiply     = { "*" }
+increment    = { "++" }
+decrement    = { "--" }
+range        = { ".." }
+objectAccess = { "." }
 
 // Logic operators
 and = { "and" | "&&" }
@@ -78,7 +86,6 @@ neq = { "!=" | "<>" }
 operators = _{ add | subtract | multiply | divide | modulo }
 add       =  { "+" }
 subtract  =  { "-" }
-multiply  =  { "*" }
 divide    =  { "/" }
 modulo    =  { "%" }
 
@@ -107,13 +114,15 @@ string = @{ "\"" ~ ("\\\"" | (!"\"" ~ ANY))* ~ "\"" }
 // Complex types
 object = {
     "{" ~ "}"
-  | "{" ~ pair ~ ("," ~ pair)* ~ "}"
+  | "{" ~ (pairMultiLine) ~ ("," ~ pairMultiLine)* ~ "}"
 }
-pair   = { (ident ~ ":" ~ (expr) | ident) }
+
+pairMultiLine = _{ NEWLINE* ~ (pair ~ ","? ~ NEWLINE+)* ~ expr? }
+pair          =  { (ident | "\"" ~ ident ~ "\"") ~ ":" ~ code }
 
 array = {
     "[" ~ "]"
-  | "[" ~ (expr) ~ ("," ~ (expr))* ~ "]"
+  | "[" ~ (code) ~ ("," ~ (code))* ~ "]"
 }
 
 // We can't have SOI and EOI on expr directly, because it is used recursively (e.g. with parentheses)

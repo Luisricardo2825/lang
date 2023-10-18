@@ -21,18 +21,14 @@ lazy_static::lazy_static! {
     };
 }
 
-#[derive(PartialEq, Debug, Clone)]
-pub enum Op {
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum Verb {
+    Plus,
     Add,
     Subtract,
     Multiply,
     Divide,
     Modulo,
-}
-
-#[derive(PartialEq, Eq, Debug, Clone)]
-pub enum Verb {
-    Plus,
     Increment,
     Decrement,
     And,
@@ -44,6 +40,7 @@ pub enum Verb {
     Gte,
     Eq,
     Neq,
+    Range,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -56,7 +53,6 @@ pub enum Expr {
     Keywords(Keywords),
     Terms(Vec<Expr>),
     IsGlobal {
-        context: String,
         modifier: String,
         ident: String,
         expr: Box<Expr>,
@@ -66,7 +62,7 @@ pub enum Expr {
     UnaryMinus(Box<Expr>),
     BinOp {
         lhs: Box<Expr>,
-        op: Op,
+        op: Verb,
         rhs: Box<Expr>,
     },
     Primitives(Primitives),
@@ -79,6 +75,7 @@ pub enum Expr {
         lhs: Box<Expr>,
         rhs: Box<Expr>,
     },
+    Null,
 }
 
 pub fn parse_expr(pairs: Pairs<Rule>, var_pool: &mut Vec<Variable>) -> Expr {
@@ -87,11 +84,11 @@ pub fn parse_expr(pairs: Pairs<Rule>, var_pool: &mut Vec<Variable>) -> Expr {
             .map_primary(|primary| resolve_rule(primary, var_pool))
             .map_infix(|lhs, op, rhs| {
                 let op = match op.as_rule() {
-                    Rule::add => Op::Add,
-                    Rule::subtract => Op::Subtract,
-                    Rule::multiply => Op::Multiply,
-                    Rule::divide => Op::Divide,
-                    Rule::modulo => Op::Modulo,
+                    Rule::add => Verb::Add,
+                    Rule::subtract => Verb::Subtract,
+                    Rule::multiply => Verb::Multiply,
+                    Rule::divide => Verb::Divide,
+                    Rule::modulo => Verb::Modulo,
                     rule => unreachable!("Expr::parse expected infix operation, found {:?}", rule),
                 };
                 Expr::BinOp {
@@ -140,30 +137,25 @@ fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Var
             let expr = resolve_rule(expr, var_pool);
 
             let mut terms = vec![];
-            let change_pool: Vec<Variable> = var_pool
-                .into_iter()
-                .map(|x| {
-                    x.is_const = false;
-                    x.value = Expr::Primitives(eval(x.value.to_owned()));
-                    x.to_owned()
-                })
-                .collect();
-            // println!("{:?}", change_pool);
-            for i in 0..eval(expr).to_integer() {
-                let mut var_pool: Vec<Variable> = vec![];
-                var_pool.append(&mut change_pool.to_owned());
-                let body = pair.to_owned().into_iter();
 
+            let expr = eval(expr);
+            let to = expr.to_array();
+            for i in to {
+                let mut local_pool = vec![];
+                local_pool.append(var_pool);
+                add_var(&mut local_pool, ident, "let", &&Expr::Primitives(i));
+                let body = pair.to_owned().into_iter();
                 for ele in body {
-                    add_var(&mut var_pool, ident, "", &Expr::Number(i as f64));
-                    let body = resolve_rule(ele.to_owned(), &mut var_pool);
+                    let body = resolve_rule(ele.to_owned(), &mut local_pool);
                     terms.push(body);
                 }
             }
 
-            Expr::Keywords(Keywords::For {
-                body: Box::new(terms),
-            })
+            Expr::IsGlobal {
+                modifier: "for".to_owned(),
+                ident: ident.to_owned(),
+                expr: Box::new(Expr::Terms(terms)),
+            }
         }
         Rule::expr => parse_expr(primary.into_inner(), var_pool),
         Rule::number => Expr::Number(primary.as_str().trim().parse::<f64>().unwrap()),
@@ -202,19 +194,14 @@ fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Var
             let ident = primary.as_str();
             let ident = ident.trim();
             let ident = ident.to_string();
-            for ele in &mut *var_pool {
-                if ele.ident == ident {
-                    return ele.value.to_owned();
-                }
-            }
-            panic!("Could'nt find: \"{ident}\"")
+            let var = get_var(var_pool, &ident);
+
+            var.value
         }
         Rule::assgmtExpr => {
             let mut pair = primary.into_inner();
             let stmt = pair.next().unwrap().as_str();
-            if !["const", ""].contains(&stmt.trim()) {
-                panic!("Expected assignment");
-            }
+
             let ident = pair.next().unwrap();
 
             let expr = pair.next().unwrap();
@@ -226,9 +213,8 @@ fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Var
             add_var(var_pool, ident, stmt, &expr);
 
             Expr::IsGlobal {
-                context: String::from(context_id() + ident),
-                modifier: String::from(stmt),
-                ident: String::from(ident),
+                modifier: stmt.to_owned(),
+                ident: ident.to_owned(),
                 expr: Box::new(expr),
             }
         }
@@ -273,29 +259,52 @@ fn add_var(var_pool: &mut Vec<Variable>, ident: &str, modifier: &str, expr: &Exp
         if ele.ident == ident.to_string() {
             found = true;
             if ele.is_const {
-                panic!("Cannot modify const variable");
+                continue;
             }
             break;
         }
+    }
+    if modifier.is_empty() {
+        let Variable {
+            ident,
+            value,
+            is_const,
+        } = get_var(var_pool, &ident);
+        if is_const {
+            panic!("Cannot modify const")
+        }
+        let va = eval(Expr::Terms(vec![value, expr.to_owned()]));
+
+        var_pool.retain(|ele| ele.ident != ident.to_string());
+
+        let new_var = Variable {
+            value: Expr::Primitives(va),
+            ident,
+            is_const,
+        };
+        return var_pool.push(new_var);
     }
     if found {
         // Remove var
         var_pool.retain(|ele| ele.ident != ident.to_string());
     }
-    let value = Expr::IsGlobal {
-        context: String::from(context_id() + &ident),
-        modifier: String::from(modifier),
-        ident: String::from(&ident),
-        expr: Box::new(expr.clone()),
-    };
+
     // Insert var
     var_pool.push(Variable {
-        value: value,
+        value: expr.to_owned(),
         is_const: if modifier == "const" { true } else { false },
         ident,
     });
 }
-
+fn get_var(var_pool: &mut Vec<Variable>, ident: &str) -> Variable {
+    let ident = String::from(ident);
+    let variable = var_pool.clone().into_iter().find(|ele| ele.ident == ident);
+    let var = match variable {
+        Some(value) => value,
+        None => panic!("Variable: \"{ident}\", dont exists"),
+    };
+    var
+}
 fn parse_dyadic_verb(pair: pest::iterators::Pair<Rule>, lhs: Expr, rhs: Expr) -> Expr {
     Expr::DyadicOp {
         lhs: Box::new(lhs),
@@ -305,6 +314,8 @@ fn parse_dyadic_verb(pair: pest::iterators::Pair<Rule>, lhs: Expr, rhs: Expr) ->
             "!" => Verb::Not,
             "!=" => Verb::Neq,
             "==" => Verb::Eq,
+            ".." | "." => Verb::Range,
+            "*" => Verb::Multiply,
             _ => panic!("Unexpected dyadic verb: {}", pair.as_str()),
         },
     }
@@ -315,6 +326,7 @@ fn parse_monadic_verb(pair: pest::iterators::Pair<Rule>, expr: Expr) -> Expr {
         verb: match pair.as_str() {
             "++" => Verb::Increment,
             "!" => Verb::Not,
+            ".." => Verb::Range,
             _ => panic!("Unsupported monadic verb: {}", pair.as_str()),
         },
         expr: Box::new(expr),
@@ -359,7 +371,6 @@ pub enum Primitives {
 }
 
 fn eval(expr: Expr) -> Primitives {
-    let mut var_pool: Vec<Variable> = vec![];
     match expr {
         Expr::Number(i) => Primitives::Number(i),
         Expr::UnaryMinus(e) => {
@@ -370,29 +381,36 @@ fn eval(expr: Expr) -> Primitives {
             let lhs = eval(*lhs).to_number();
             let rhs = eval(*rhs).to_number();
             let result = match op {
-                Op::Add => lhs + rhs,
-                Op::Subtract => lhs - rhs,
-                Op::Multiply => lhs * rhs,
-                Op::Divide => lhs / rhs,
-                Op::Modulo => lhs % rhs,
+                Verb::Add => lhs + rhs,
+                Verb::Subtract => lhs - rhs,
+                Verb::Multiply => lhs * rhs,
+                Verb::Divide => lhs / rhs,
+                Verb::Modulo => lhs % rhs,
+                Verb::Plus => todo!(),
+                Verb::Increment => todo!(),
+                Verb::Decrement => todo!(),
+                Verb::And => todo!(),
+                Verb::Or => todo!(),
+                Verb::Not => todo!(),
+                Verb::Lt => todo!(),
+                Verb::Lte => todo!(),
+                Verb::Gt => todo!(),
+                Verb::Gte => todo!(),
+                Verb::Eq => todo!(),
+                Verb::Neq => todo!(),
+                Verb::Range => todo!(),
             };
             Primitives::Number(result)
         }
         Expr::String(value) => Primitives::String(value),
         Expr::Primitives(value) => value,
         Expr::IsGlobal {
-            context,
             modifier,
             ident,
             expr,
         } => {
-            let value = eval(*expr.clone());
-            var_pool.push(Variable {
-                ident: ident,
-                value: *expr,
-                is_const: false,
-            });
-            value
+            eval(*expr);
+            Primitives::Eof
         }
         Expr::MonadicOp { verb: _, expr: _ } => todo!(),
         Expr::DyadicOp { verb, lhs, rhs } => match verb {
@@ -415,13 +433,40 @@ fn eval(expr: Expr) -> Primitives {
             Verb::Gte => todo!(),
             Verb::Eq => todo!(),
             Verb::Neq => todo!(),
+            Verb::Range => {
+                let lhs = eval(*lhs);
+                let lhs = lhs.to_integer();
+                let rhs = eval(*rhs).to_integer();
+
+                let result = lhs..rhs;
+                let vec: Vec<Primitives> = result
+                    .into_iter()
+                    .map(|x| Primitives::Number(x as f64))
+                    .collect();
+                Primitives::Array(vec)
+                // Primitives::Number(lhs.to_number() + rhs.to_number())
+            }
+            Verb::Add => todo!(),
+            Verb::Subtract => todo!(),
+            Verb::Multiply => {
+                let lhs = eval(*lhs);
+                let rhs = eval(*rhs);
+                if !lhs.is_number() {
+                    panic!("Unexpected value: {:?}", lhs)
+                }
+                if !rhs.is_number() {
+                    panic!("Unexpected value: {:?}", rhs)
+                }
+                let calc = lhs.to_number() * rhs.to_number();
+                Primitives::Number(calc)
+            }
+            Verb::Divide => todo!(),
+            Verb::Modulo => todo!(),
         },
         Expr::Terms(terms) => {
-            let mut arr = vec![];
-            for ele in terms {
-                arr.push(eval(ele));
-            }
-            return Primitives::Array(arr);
+            let terms = terms.clone();
+            let terms: Vec<Primitives> = terms.into_iter().map(|x| eval(x)).collect();
+            return terms.last().unwrap().to_owned();
         }
         Expr::Keywords(keyword) => match keyword {
             Keywords::For { body } => {
@@ -436,6 +481,7 @@ fn eval(expr: Expr) -> Primitives {
             println!("{}", eval(*value).to_string());
             Primitives::Eof
         }
+        Expr::Null => Primitives::Eof,
     }
 }
 
@@ -567,18 +613,6 @@ fn serialize_jsonvalue(val: &Primitives) -> String {
         Null => format!("null"),
         Eof => "".to_owned(),
     }
-}
-
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
-fn hash<T>(obj: T) -> u64
-where
-    T: Hash,
-{
-    let mut hasher = DefaultHasher::new();
-    obj.hash(&mut hasher);
-    hasher.finish()
 }
 
 fn context_id() -> String {
