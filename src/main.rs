@@ -78,10 +78,10 @@ pub enum Expr {
     Null,
 }
 
-pub fn parse_expr(pairs: Pairs<Rule>, var_pool: &mut Vec<Variable>) -> Expr {
+pub fn parse_expr(pairs: Pairs<Rule>, var_pool: &mut Vec<Variable>, context_id: &str) -> Expr {
     if pairs.len() > 0 {
         PRATT_PARSER
-            .map_primary(|primary| resolve_rule(primary, var_pool))
+            .map_primary(|primary| resolve_rule(primary, var_pool, context_id))
             .map_infix(|lhs, op, rhs| {
                 let op = match op.as_rule() {
                     Rule::add => Verb::Add,
@@ -107,23 +107,27 @@ pub fn parse_expr(pairs: Pairs<Rule>, var_pool: &mut Vec<Variable>) -> Expr {
     }
 }
 
-fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Variable>) -> Expr {
+fn resolve_rule(
+    primary: pest::iterators::Pair<'_, Rule>,
+    var_pool: &mut Vec<Variable>,
+    context_id: &str,
+) -> Expr {
     match primary.as_rule() {
         Rule::functions => {
             let mut keyword = primary.into_inner();
             let keyword = keyword.next().unwrap();
-            resolve_rule(keyword, var_pool)
+            resolve_rule(keyword, var_pool, context_id)
         }
         Rule::print => {
             let mut pair = primary.into_inner();
             let expr = pair.next().unwrap();
-            let expr = resolve_rule(expr, var_pool);
+            let expr = resolve_rule(expr, var_pool, context_id);
             Expr::Print(Box::new(expr))
         }
         Rule::keywords => {
             let mut keyword = primary.into_inner();
             let keyword = keyword.next().unwrap();
-            resolve_rule(keyword, var_pool)
+            resolve_rule(keyword, var_pool, context_id)
         }
         Rule::forLoop => {
             let mut pair = primary.into_inner();
@@ -134,32 +138,33 @@ fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Var
             let ident = pair.next().unwrap();
             let ident = ident.as_str();
             let expr = pair.next().unwrap();
-            let expr = resolve_rule(expr, var_pool);
-
-            let mut terms = vec![];
+            let expr = resolve_rule(expr, var_pool, context_id);
 
             let expr = eval(expr);
             let to = expr.to_array();
-            for i in to {
-                let mut local_pool = vec![];
-                local_pool.append(var_pool);
-                add_var(&mut local_pool, ident, "let", &&Expr::Primitives(i));
-                let body = pair.to_owned().into_iter();
-                for ele in body {
-                    let body = resolve_rule(ele.to_owned(), &mut local_pool);
-                    terms.push(body);
+            let local_context_id = generate_context_id();
+            for index in to {
+                add_var(
+                    var_pool,
+                    ident,
+                    "",
+                    &&Expr::Primitives(index.clone()),
+                    &local_context_id,
+                );
+                for body in pair.clone() {
+                    let body = body.into_inner();
+                    for code in body {
+                        let body = resolve_rule(code, var_pool, &local_context_id);
+                        eval(body);
+                    }
                 }
             }
 
-            Expr::IsGlobal {
-                modifier: "for".to_owned(),
-                ident: ident.to_owned(),
-                expr: Box::new(Expr::Terms(terms)),
-            }
+            Expr::Null
         }
-        Rule::expr => parse_expr(primary.into_inner(), var_pool),
+        Rule::expr => parse_expr(primary.into_inner(), var_pool, context_id),
         Rule::number => Expr::Number(primary.as_str().trim().parse::<f64>().unwrap()),
-        Rule::mathExpr => parse_expr(primary.into_inner(), var_pool),
+        Rule::mathExpr => parse_expr(primary.into_inner(), var_pool, context_id),
         Rule::string => {
             let str = primary.as_str().to_owned();
 
@@ -171,7 +176,7 @@ fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Var
         Rule::array => {
             let mut arr = vec![];
             for ele in primary.into_inner() {
-                let ast = parse_expr(ele.into_inner(), var_pool);
+                let ast = parse_expr(ele.into_inner(), var_pool, context_id);
                 arr.push(eval(ast));
             }
             Expr::Primitives(Primitives::Array(arr))
@@ -183,18 +188,22 @@ fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Var
                 let key = pair.next().unwrap();
                 let value = pair.next().unwrap_or(key.clone());
                 let key = key.as_str();
-                let value = resolve_rule(value, var_pool);
+                let value = resolve_rule(value, var_pool, context_id);
                 obj.insert(String::from(key), eval(value));
             }
             Expr::Primitives(Primitives::Object(obj))
         }
-        Rule::value => parse_expr(primary.into_inner(), var_pool),
+        Rule::value => parse_expr(primary.into_inner(), var_pool, context_id),
         Rule::ident => {
             // get value from var_pool
             let ident = primary.as_str();
             let ident = ident.trim();
             let ident = ident.to_string();
-            let var = get_var(var_pool, &ident);
+            let msg = format!(
+                "Variable {} not found. Context: {context_id} {:?}",
+                ident, var_pool
+            );
+            let var = get_var(var_pool, &ident, context_id).expect(&msg);
 
             var.value
         }
@@ -206,39 +215,34 @@ fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Var
 
             let expr = pair.next().unwrap();
 
-            let expr = resolve_rule(expr, var_pool);
+            let expr = resolve_rule(expr, var_pool, context_id);
 
             let ident = ident.as_str();
 
-            add_var(var_pool, ident, stmt, &expr);
-
-            Expr::IsGlobal {
-                modifier: stmt.to_owned(),
-                ident: ident.to_owned(),
-                expr: Box::new(expr),
-            }
+            add_var(var_pool, ident, stmt, &expr, context_id);
+            Expr::Null
         }
         Rule::monadicExpr => {
             let mut pair = primary.into_inner();
             let verb = pair.next().unwrap();
             let expr = pair.next().unwrap();
-            parse_monadic_verb(verb, resolve_rule(expr, var_pool))
+            parse_monadic_verb(verb, resolve_rule(expr, var_pool, context_id))
         }
         Rule::dyadicExpr => {
             let mut pairs = primary.into_inner();
             let lhs = pairs.next().unwrap();
             let verb = pairs.next().unwrap();
             let rhs = pairs.next().unwrap();
-            let lhs = resolve_rule(lhs, var_pool);
+            let lhs = resolve_rule(lhs, var_pool, context_id);
 
-            let rhs = resolve_rule(rhs, var_pool);
+            let rhs = resolve_rule(rhs, var_pool, context_id);
 
             parse_dyadic_verb(verb, lhs, rhs)
         }
         Rule::terms => {
             let terms: Vec<Expr> = primary
                 .into_inner()
-                .map(|node| resolve_rule(node, var_pool))
+                .map(|node| resolve_rule(node, var_pool, context_id))
                 .collect();
             // If there's just a single term, return it without
             // wrapping it in a Terms node.
@@ -251,60 +255,86 @@ fn resolve_rule(primary: pest::iterators::Pair<'_, Rule>, var_pool: &mut Vec<Var
     }
 }
 
-fn add_var(var_pool: &mut Vec<Variable>, ident: &str, modifier: &str, expr: &Expr) {
-    let mut found = false;
+fn add_var(
+    var_pool: &mut Vec<Variable>,
+    ident: &str,
+    modifier: &str,
+    expr: &Expr,
+    context_id: &str,
+) {
     let ident = String::from(ident);
-    // Check if var exists
-    for ele in var_pool.clone() {
-        if ele.ident == ident.to_string() {
-            found = true;
-            if ele.is_const {
-                continue;
+    let is_assigment = ["const", "let"].contains(&modifier);
+    if is_assigment {
+        let var = get_var(var_pool, &ident, context_id);
+
+        if var.is_some() {
+            return match var {
+                Some(var) => {
+                    let index = var_pool
+                        .iter()
+                        .position(|x| *x.ident == var.ident && x.context_id == context_id);
+
+                    if index.is_none() {
+                        return var_pool.push(Variable {
+                            str_value: eval(expr.clone()).to_string(),
+                            value: expr.to_owned(),
+                            is_const: if modifier == "const" { true } else { false },
+                            ident,
+                            context_id: context_id.to_owned(),
+                        });
+                    }
+                    let index = index.unwrap();
+                    var_pool[index].value = expr.to_owned();
+                    var_pool[index].is_const = if modifier == "const" { true } else { false };
+                    var_pool[index].str_value = eval(expr.clone()).to_string();
+                    var_pool[index].ident = ident.clone();
+                }
+
+                None => (),
+            };
+        }
+        var_pool.push(Variable {
+            str_value: eval(expr.clone()).to_string(),
+            value: expr.to_owned(),
+            is_const: if modifier == "const" { true } else { false },
+            ident,
+            context_id: context_id.to_owned(),
+        });
+    } else {
+        let var = get_var(var_pool, &ident, context_id);
+        match var {
+            Some(var) => {
+                let index = var_pool.iter().position(|x| *x == var).unwrap();
+                var_pool[index].value = expr.to_owned();
             }
-            break;
+            None => add_var(var_pool, &ident, "let", expr, context_id),
         }
     }
-    if modifier.is_empty() {
-        let Variable {
-            ident,
-            value,
-            is_const,
-        } = get_var(var_pool, &ident);
-        if is_const {
-            panic!("Cannot modify const")
-        }
-        let va = eval(Expr::Terms(vec![value, expr.to_owned()]));
-
-        var_pool.retain(|ele| ele.ident != ident.to_string());
-
-        let new_var = Variable {
-            value: Expr::Primitives(va),
-            ident,
-            is_const,
-        };
-        return var_pool.push(new_var);
-    }
-    if found {
-        // Remove var
-        var_pool.retain(|ele| ele.ident != ident.to_string());
-    }
-
-    // Insert var
-    var_pool.push(Variable {
-        value: expr.to_owned(),
-        is_const: if modifier == "const" { true } else { false },
-        ident,
-    });
 }
-fn get_var(var_pool: &mut Vec<Variable>, ident: &str) -> Variable {
+
+fn get_var(var_pool: &mut Vec<Variable>, ident: &str, context_id: &str) -> Option<Variable> {
     let ident = String::from(ident);
-    let variable = var_pool.clone().into_iter().find(|ele| ele.ident == ident);
-    let var = match variable {
-        Some(value) => value,
-        None => panic!("Variable: \"{ident}\", dont exists"),
-    };
+    let mut variable = var_pool
+        .clone()
+        .into_iter()
+        .filter(|ele| ele.ident == ident && ele.context_id == context_id);
+
+    let var = variable.nth(0);
+    match var {
+        Some(var) => Some(var.clone()),
+        None => get_from_global(var_pool, ident),
+    }
+}
+
+fn get_from_global(var_pool: &mut Vec<Variable>, ident: String) -> Option<Variable> {
+    let mut variable = var_pool
+        .clone()
+        .into_iter()
+        .filter(|ele| ele.ident == ident && ele.context_id == "global");
+    let var = variable.nth(0);
     var
 }
+
 fn parse_dyadic_verb(pair: pest::iterators::Pair<Rule>, lhs: Expr, rhs: Expr) -> Expr {
     Expr::DyadicOp {
         lhs: Box::new(lhs),
@@ -343,8 +373,7 @@ fn main() -> io::Result<()> {
             continue;
         }
 
-        // println!("{str}");
-        let exprs = parse_expr(pair.into_inner(), &mut var_pool);
+        let exprs = parse_expr(pair.into_inner(), &mut var_pool, "global");
         eval(exprs);
     }
 
@@ -357,6 +386,8 @@ pub struct Variable {
     pub ident: String,
     pub value: Expr,
     pub is_const: bool,
+    pub context_id: String,
+    pub str_value: String,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -615,7 +646,7 @@ fn serialize_jsonvalue(val: &Primitives) -> String {
     }
 }
 
-fn context_id() -> String {
+fn generate_context_id() -> String {
     use rand::{thread_rng, Rng};
 
     use rand::distributions::Alphanumeric;

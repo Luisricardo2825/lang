@@ -1,7 +1,12 @@
-let count = -1;
-
-for i in 0..5 {
-    let count = i+1;
-    print("Id:"+count)
+let count = 0
+for i in 0..2{
+    let count = i
+    print("Index:"+count )
 }
-print(count)
+
+for i in 0..2{
+    print("Index2:"+count )
+    count = i
+}
+
+print("count:"+count)
