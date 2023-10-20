@@ -203,8 +203,19 @@ fn resolve_rule(
                 "Variable {} not found. Context: {context_id} {:?}",
                 ident, var_pool
             );
-            let var = get_var(var_pool, &ident, context_id).expect(&msg);
-
+            let var = get_var(var_pool, &ident, context_id);
+            if var.is_none() {
+                let mut contexts = get_contexts(var_pool);
+                contexts.reverse();
+                for context in contexts {
+                    let var = get_var(var_pool, &ident, &context);
+                    if var.is_some() {
+                        return var.unwrap().value;
+                    }
+                }
+                panic!("{}", msg);
+            }
+            let var = var.unwrap();
             var.value
         }
         Rule::assgmtExpr => {
@@ -333,6 +344,15 @@ fn get_from_global(var_pool: &mut Vec<Variable>, ident: String) -> Option<Variab
         .filter(|ele| ele.ident == ident && ele.context_id == "global");
     let var = variable.nth(0);
     var
+}
+
+fn get_contexts(var_pool: &mut Vec<Variable>) -> Vec<String> {
+    let contexts: Vec<String> = var_pool
+        .clone()
+        .into_iter()
+        .map(|ele| ele.context_id)
+        .collect();
+    contexts
 }
 
 fn parse_dyadic_verb(pair: pest::iterators::Pair<Rule>, lhs: Expr, rhs: Expr) -> Expr {

@@ -1,12 +1,13 @@
 let count = 0
+let i = "TESTE"
 for i in 0..2{
-    let count = i
-    print("Index:"+count )
+  count = i+1
+  for j in -2..0{
+     print("i="+i+" "+"j="+j+" "+"count="+count)
+  }
 }
+print("count="+count)
 
-for i in 0..2{
-    print("Index2:"+count )
-    count = i
-}
+count= "teste"
 
-print("count:"+count)
+print("count="+count)
