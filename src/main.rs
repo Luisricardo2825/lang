@@ -1,7 +1,7 @@
 use pest::iterators::Pairs;
 use pest::pratt_parser::PrattParser;
 use pest::Parser;
-use std::{collections::HashMap, io};
+use std::{collections::HashMap, io, time::Instant};
 
 #[derive(pest_derive::Parser)]
 #[grammar = "grammar.pest"]
@@ -41,6 +41,7 @@ pub enum Verb {
     Eq,
     Neq,
     Range,
+    ObjectAccess,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -148,7 +149,7 @@ fn resolve_rule(
                     var_pool,
                     ident,
                     "",
-                    &&Expr::Primitives(index.clone()),
+                    &&Expr::Primitives(index),
                     &local_context_id,
                 );
                 for body in pair.clone() {
@@ -158,8 +159,9 @@ fn resolve_rule(
                         eval(body);
                     }
                 }
+                delete_context(var_pool, &local_context_id);
             }
-
+            delete_context(var_pool, &local_context_id);
             Expr::Null
         }
         Rule::expr => parse_expr(primary.into_inner(), var_pool, context_id),
@@ -167,10 +169,13 @@ fn resolve_rule(
         Rule::mathExpr => parse_expr(primary.into_inner(), var_pool, context_id),
         Rule::string => {
             let str = primary.as_str().to_owned();
-
             let str = &str[1..str.len() - 1];
 
+            let str = str.replace("\\\\", "\\");
             let str = str.replace("\\\"", "\"");
+            let str = str.replace("\\n", "\n");
+            let str = str.replace("\\r", "\r");
+            let str = str.replace("\\t", "\t");
             Expr::String(String::from(&str[..]))
         }
         Rule::array => {
@@ -192,6 +197,30 @@ fn resolve_rule(
                 obj.insert(String::from(key), eval(value));
             }
             Expr::Primitives(Primitives::Object(obj))
+        }
+        Rule::objectProp => {
+            let mut pairs = primary.into_inner();
+            let object_name = pairs.next().unwrap().as_str();
+            let sep = pairs.next().unwrap().as_str();
+            let object_prop = pairs.next().unwrap().as_str();
+            let var = get_var(var_pool, object_name, context_id);
+            let var = var.unwrap();
+            let mut object = eval(var.value).to_object();
+            let props: Vec<&str> = object_prop.split(sep).collect();
+            let mut value = Primitives::Null;
+            let mut count = 0;
+            let size = props.len();
+            for ele in props {
+                let ob_value = object.get(ele).unwrap_or(&Primitives::Null).to_owned();
+                if ob_value.is_object() {
+                    object = ob_value.to_object();
+                }
+                if count == size - 1 {
+                    value = ob_value.to_owned();
+                }
+                count += 1;
+            }
+            Expr::Primitives(value)
         }
         Rule::value => parse_expr(primary.into_inner(), var_pool, context_id),
         Rule::ident => {
@@ -230,7 +259,13 @@ fn resolve_rule(
 
             let ident = ident.as_str();
 
-            add_var(var_pool, ident, stmt, &expr, context_id);
+            add_var(
+                var_pool,
+                ident,
+                stmt,
+                &Expr::Primitives(eval(expr)),
+                context_id,
+            );
             Expr::Null
         }
         Rule::monadicExpr => {
@@ -272,57 +307,74 @@ fn add_var(
     modifier: &str,
     expr: &Expr,
     context_id: &str,
-) {
+) -> Variable {
     let ident = String::from(ident);
     let is_assigment = ["const", "let"].contains(&modifier);
     if is_assigment {
         let var = get_var(var_pool, &ident, context_id);
 
         if var.is_some() {
-            return match var {
+            match var {
                 Some(var) => {
                     let index = var_pool
                         .iter()
                         .position(|x| *x.ident == var.ident && x.context_id == context_id);
 
                     if index.is_none() {
-                        return var_pool.push(Variable {
-                            str_value: eval(expr.clone()).to_string(),
+                        let variable = Variable {
                             value: expr.to_owned(),
                             is_const: if modifier == "const" { true } else { false },
                             ident,
                             context_id: context_id.to_owned(),
-                        });
+                        };
+                        var_pool.push(variable.clone());
+                        return variable;
                     }
                     let index = index.unwrap();
                     var_pool[index].value = expr.to_owned();
                     var_pool[index].is_const = if modifier == "const" { true } else { false };
-                    var_pool[index].str_value = eval(expr.clone()).to_string();
                     var_pool[index].ident = ident.clone();
+                    return var_pool[index].clone();
                 }
 
-                None => (),
+                None => todo!(),
             };
         }
-        var_pool.push(Variable {
-            str_value: eval(expr.clone()).to_string(),
+        let variable = Variable {
             value: expr.to_owned(),
             is_const: if modifier == "const" { true } else { false },
             ident,
             context_id: context_id.to_owned(),
-        });
+        };
+        var_pool.push(variable.clone());
+        return variable;
     } else {
         let var = get_var(var_pool, &ident, context_id);
         match var {
             Some(var) => {
                 let index = var_pool.iter().position(|x| *x == var).unwrap();
                 var_pool[index].value = expr.to_owned();
+                return var_pool[index].clone();
             }
             None => add_var(var_pool, &ident, "let", expr, context_id),
         }
     }
 }
 
+fn delete_var(var_pool: &mut Vec<Variable>, ident: &str, context_id: &str) {
+    let ident = String::from(ident);
+    let index = var_pool
+        .iter()
+        .position(|x| x.ident == ident && x.context_id == context_id);
+    if index.is_none() {
+        return;
+    }
+    var_pool.remove(index.unwrap());
+}
+
+fn delete_context(var_pool: &mut Vec<Variable>, context_id: &str) {
+    var_pool.retain(|x| x.context_id != context_id);
+}
 fn get_var(var_pool: &mut Vec<Variable>, ident: &str, context_id: &str) -> Option<Variable> {
     let ident = String::from(ident);
     let mut variable = var_pool
@@ -364,7 +416,8 @@ fn parse_dyadic_verb(pair: pest::iterators::Pair<Rule>, lhs: Expr, rhs: Expr) ->
             "!" => Verb::Not,
             "!=" => Verb::Neq,
             "==" => Verb::Eq,
-            ".." | "." => Verb::Range,
+            ".." => Verb::Range,
+            "." => Verb::ObjectAccess,
             "*" => Verb::Multiply,
             _ => panic!("Unexpected dyadic verb: {}", pair.as_str()),
         },
@@ -384,6 +437,7 @@ fn parse_monadic_verb(pair: pest::iterators::Pair<Rule>, expr: Expr) -> Expr {
 }
 
 fn main() -> io::Result<()> {
+    let now = Instant::now();
     let mut var_pool: Vec<Variable> = vec![];
     let unparsed_file = std::fs::read_to_string("example.er").expect("cannot read jsc file");
     let pairs = LangParser::parse(Rule::program, &unparsed_file).expect("Erro parsing");
@@ -397,6 +451,14 @@ fn main() -> io::Result<()> {
         eval(exprs);
     }
 
+    println!("Tempo decorrido: {}ms", now.elapsed().as_millis());
+    let mut count = 1000;
+    let mut sum = 0;
+    for item in 0..1000 {
+        sum = sum + item;
+        count = count + 1;
+    }
+    println!("{}", sum);
     Ok(())
 }
 
@@ -407,7 +469,6 @@ pub struct Variable {
     pub value: Expr,
     pub is_const: bool,
     pub context_id: String,
-    pub str_value: String,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -450,6 +511,7 @@ fn eval(expr: Expr) -> Primitives {
                 Verb::Eq => todo!(),
                 Verb::Neq => todo!(),
                 Verb::Range => todo!(),
+                Verb::ObjectAccess => todo!(),
             };
             Primitives::Number(result)
         }
@@ -513,6 +575,7 @@ fn eval(expr: Expr) -> Primitives {
             }
             Verb::Divide => todo!(),
             Verb::Modulo => todo!(),
+            Verb::ObjectAccess => todo!(),
         },
         Expr::Terms(terms) => {
             let terms = terms.clone();

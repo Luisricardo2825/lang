@@ -1,13 +1,10 @@
 let count = 0
-let i = "TESTE"
-for i in 0..2{
-  count = i+1
-  for j in -2..0{
-     print("i="+i+" "+"j="+j+" "+"count="+count)
-  }
+let sum = 0;
+for item in 0..1000 {
+		count = count+1
+	sum = sum+item
+//   print("Nome: "+item.name)
 }
-print("count="+count)
 
-count= "teste"
-
-print("count="+count)
+print("Total percorrido:"+count)
+print("Soma:"+sum)

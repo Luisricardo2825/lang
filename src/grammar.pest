@@ -27,7 +27,7 @@ stmt    = {
   | "for"
 }
 print   = { "print" ~ "(" ~ code ~ ")" }
-forLoop = { stmt ~ ident ~ "in" ~ expr ~ "{" ~ code ~ "}" }
+forLoop = { stmt ~ ident ~ "in" ~ expr ~ NEWLINE* ~ "{" ~ code ~ "}" }
 
 // expressions(Logic)
 monadicExpr = { verb ~ expr }
@@ -40,7 +40,7 @@ mathExpr = { atom ~ (operators ~ atom)* }
 // Terms
 terms = { term+ }
 
-term = _{ ident | "(" ~ expr ~ ")" }
+term = _{ (objectProp | ident) | "(" ~ expr ~ ")" }
 
 // Variables
 
@@ -50,6 +50,7 @@ assgmtExpr = { modifier ~ ident ~ "=" ~ expr }
 verb = {
     plus
   | multiply
+  | range
   | increment
   | decrement
   | and
@@ -61,7 +62,6 @@ verb = {
   | gte
   | eq
   | neq
-  | range
   | objectAccess
 }
 // operators
@@ -93,7 +93,7 @@ modulo    =  { "%" }
 ident = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // value types
-value = { object | array | string | mathExpr | boolean | null | ident }
+value = { objectProp | object | array | string | mathExpr | boolean | null | ident }
 
 // Simple
 
@@ -105,24 +105,26 @@ number = { unary_minus? ~ numericChar }
 // "negate" a number
 unary_minus = { "-" }
 // Define char that match a number
-numericChar = @{ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) ~ ("." ~ ASCII_DIGIT*)? ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+)? }
+numericChar = @{ ("0" | ASCII_NONZERO_DIGIT ~ ASCII_DIGIT*) ~ (("." ~ ASCII_DIGIT*)? ~ (^"e" ~ ("+" | "-")? ~ ASCII_DIGIT+))? }
 
 primary = _{ number | "(" ~ expr ~ ")" }
 atom    = _{ unary_minus? ~ primary }
 
-string = @{ "\"" ~ ("\\\"" | (!"\"" ~ ANY))* ~ "\"" }
+string = @{ "\"" ~ ("\\\"" | "\\\\" | (!"\"" ~ ANY))* ~ "\"" }
 // Complex types
 object = {
     "{" ~ "}"
-  | "{" ~ (pairMultiLine) ~ ("," ~ pairMultiLine)* ~ "}"
+  | "{" ~ NEWLINE* ~ (pairMultiLine) ~ ("," ~ pairMultiLine)* ~ "}"
 }
 
-pairMultiLine = _{ NEWLINE* ~ (pair ~ ","? ~ NEWLINE+)* ~ expr? }
+objectProp = { ident ~ objectAccess ~ (objectProp | ident) }
+
+pairMultiLine = _{ NEWLINE* ~ (pair ~ ","? ~ NEWLINE+)* ~ pair? }
 pair          =  { (ident | "\"" ~ ident ~ "\"") ~ ":" ~ code }
 
 array = {
-    "[" ~ "]"
-  | "[" ~ (code) ~ ("," ~ (code))* ~ "]"
+    "[" ~ NEWLINE* ~ "]"
+  | "[" ~ NEWLINE* ~ (value) ~ ("," ~ (code))* ~ NEWLINE* ~ "]"
 }
 
 // We can't have SOI and EOI on expr directly, because it is used recursively (e.g. with parentheses)
