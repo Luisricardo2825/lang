@@ -24,11 +24,7 @@ lazy_static::lazy_static! {
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Verb {
     Plus,
-    Add,
-    Subtract,
-    Multiply,
-    Divide,
-    Modulo,
+    Minus,
     Increment,
     Decrement,
     And,
@@ -42,6 +38,15 @@ pub enum Verb {
     Neq,
     Range,
     ObjectAccess,
+}
+
+#[derive(PartialEq, Eq, Debug, Clone)]
+pub enum MathOperators {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -63,7 +68,7 @@ pub enum Expr {
     UnaryMinus(Box<Expr>),
     BinOp {
         lhs: Box<Expr>,
-        op: Verb,
+        op: MathOperators,
         rhs: Box<Expr>,
     },
     Primitives(Primitives),
@@ -72,11 +77,16 @@ pub enum Expr {
         expr: Box<Expr>,
     },
     DyadicOp {
-        verb: Verb,
+        verb: DyadicVerb,
         lhs: Box<Expr>,
         rhs: Box<Expr>,
     },
     Null,
+}
+#[derive(PartialEq, Debug, Clone)]
+pub enum DyadicVerb {
+    Verb(Verb),
+    MathOperators(MathOperators),
 }
 
 pub fn parse_expr(pairs: Pairs<Rule>, var_pool: &mut Vec<Variable>, context_id: &str) -> Expr {
@@ -85,11 +95,11 @@ pub fn parse_expr(pairs: Pairs<Rule>, var_pool: &mut Vec<Variable>, context_id: 
             .map_primary(|primary| resolve_rule(primary, var_pool, context_id))
             .map_infix(|lhs, op, rhs| {
                 let op = match op.as_rule() {
-                    Rule::add => Verb::Add,
-                    Rule::subtract => Verb::Subtract,
-                    Rule::multiply => Verb::Multiply,
-                    Rule::divide => Verb::Divide,
-                    Rule::modulo => Verb::Modulo,
+                    Rule::add => MathOperators::Add,
+                    Rule::subtract => MathOperators::Subtract,
+                    Rule::multiply => MathOperators::Multiply,
+                    Rule::divide => MathOperators::Divide,
+                    Rule::modulo => MathOperators::Modulo,
                     rule => unreachable!("Expr::parse expected infix operation, found {:?}", rule),
                 };
                 Expr::BinOp {
@@ -154,12 +164,9 @@ fn resolve_rule(
                 );
                 for body in pair.clone() {
                     let body = body.into_inner();
-                    for code in body {
-                        let body = resolve_rule(code, var_pool, &local_context_id);
-                        eval(body);
-                    }
+                    let body = parse_expr(body, var_pool, &local_context_id);
+                    eval(body);
                 }
-                delete_context(var_pool, &local_context_id);
             }
             delete_context(var_pool, &local_context_id);
             Expr::Null
@@ -227,25 +234,8 @@ fn resolve_rule(
             // get value from var_pool
             let ident = primary.as_str();
             let ident = ident.trim();
-            let ident = ident.to_string();
-            let msg = format!(
-                "Variable {} not found. Context: {context_id} {:?}",
-                ident, var_pool
-            );
-            let var = get_var(var_pool, &ident, context_id);
-            if var.is_none() {
-                let mut contexts = get_contexts(var_pool);
-                contexts.reverse();
-                for context in contexts {
-                    let var = get_var(var_pool, &ident, &context);
-                    if var.is_some() {
-                        return var.unwrap().value;
-                    }
-                }
-                panic!("{}", msg);
-            }
-            let var = var.unwrap();
-            var.value
+
+            get_var_value(var_pool, ident, context_id)
         }
         Rule::assgmtExpr => {
             let mut pair = primary.into_inner();
@@ -297,8 +287,68 @@ fn resolve_rule(
                 _ => Expr::Terms(terms),
             }
         }
+        Rule::unaryOperation => {
+            let mut pairs = primary.into_inner();
+            let ident = pairs.next().unwrap();
+            let mut ident = ident.as_str();
+            let mut verb = "";
+            if ["++", "--", "!"].contains(&ident) {
+                verb = ident;
+                ident = pairs.next().unwrap().as_str();
+            } else {
+                verb = pairs.next().unwrap().as_str();
+            }
+            let value = get_var_value(var_pool, ident, context_id);
+            let value = eval(value);
+            let value = value.to_number();
+            let exp = match verb {
+                "++" => {
+                    let value = value + 1.0;
+                    Expr::Primitives(Primitives::Number(value))
+                }
+                "--" => {
+                    let value = value - 1.0;
+                    Expr::Primitives(Primitives::Number(value))
+                }
+                "!" => {
+                    let value = value.is_nan() || value <= 0.0;
+                    Expr::Primitives(Primitives::Boolean(value))
+                }
+                verb => panic!("Unexpected verb: {}", verb),
+            };
+
+            add_var(var_pool, ident, "", &exp, context_id);
+
+            Expr::Null
+        }
+        Rule::boolean => {
+            let pair = primary.as_str();
+            let pair = pair.trim();
+            Expr::Primitives(Primitives::Boolean(pair == "true"))
+        }
         rule => unreachable!("Expr::parse expected atom, found {:?}", rule),
     }
+}
+
+fn get_var_value(var_pool: &mut Vec<Variable>, ident: &str, context_id: &str) -> Expr {
+    let msg = format!(
+        "Variable {} not found. Context: {context_id} {:?}",
+        ident, var_pool
+    );
+    let var = get_var(var_pool, &ident, context_id);
+    if var.is_none() {
+        let mut contexts = get_contexts(var_pool);
+        contexts.reverse();
+        for context in contexts {
+            let var = get_var(var_pool, &ident, &context);
+            if var.is_some() {
+                return var.unwrap().value;
+            }
+        }
+        panic!("{}", msg);
+    }
+    let var = var.unwrap();
+    var.value
 }
 
 fn add_var(
@@ -412,14 +462,18 @@ fn parse_dyadic_verb(pair: pest::iterators::Pair<Rule>, lhs: Expr, rhs: Expr) ->
         lhs: Box::new(lhs),
         rhs: Box::new(rhs),
         verb: match pair.as_str() {
-            "+" => Verb::Plus,
-            "!" => Verb::Not,
-            "!=" => Verb::Neq,
-            "==" => Verb::Eq,
-            ".." => Verb::Range,
-            "." => Verb::ObjectAccess,
-            "*" => Verb::Multiply,
-            _ => panic!("Unexpected dyadic verb: {}", pair.as_str()),
+            "+" => DyadicVerb::Verb(Verb::Plus),
+            "!" => DyadicVerb::Verb(Verb::Not),
+            "!=" => DyadicVerb::Verb(Verb::Neq),
+            "==" => DyadicVerb::Verb(Verb::Eq),
+            ".." => DyadicVerb::Verb(Verb::Range),
+            "." => DyadicVerb::Verb(Verb::ObjectAccess),
+            verb => match verb {
+                "*" => DyadicVerb::MathOperators(MathOperators::Multiply),
+                "/" => DyadicVerb::MathOperators(MathOperators::Divide),
+                "%" => DyadicVerb::MathOperators(MathOperators::Divide),
+                _ => panic!("Unexpected dyadic verb: {}", pair.as_str()),
+            },
         },
     }
 }
@@ -427,9 +481,9 @@ fn parse_dyadic_verb(pair: pest::iterators::Pair<Rule>, lhs: Expr, rhs: Expr) ->
 fn parse_monadic_verb(pair: pest::iterators::Pair<Rule>, expr: Expr) -> Expr {
     Expr::MonadicOp {
         verb: match pair.as_str() {
-            "++" => Verb::Increment,
+            "+" => Verb::Plus,
+            "-" => Verb::Minus,
             "!" => Verb::Not,
-            ".." => Verb::Range,
             _ => panic!("Unsupported monadic verb: {}", pair.as_str()),
         },
         expr: Box::new(expr),
@@ -452,13 +506,6 @@ fn main() -> io::Result<()> {
     }
 
     println!("Tempo decorrido: {}ms", now.elapsed().as_millis());
-    let mut count = 1000;
-    let mut sum = 0;
-    for item in 0..1000 {
-        sum = sum + item;
-        count = count + 1;
-    }
-    println!("{}", sum);
     Ok(())
 }
 
@@ -493,25 +540,11 @@ fn eval(expr: Expr) -> Primitives {
             let lhs = eval(*lhs).to_number();
             let rhs = eval(*rhs).to_number();
             let result = match op {
-                Verb::Add => lhs + rhs,
-                Verb::Subtract => lhs - rhs,
-                Verb::Multiply => lhs * rhs,
-                Verb::Divide => lhs / rhs,
-                Verb::Modulo => lhs % rhs,
-                Verb::Plus => todo!(),
-                Verb::Increment => todo!(),
-                Verb::Decrement => todo!(),
-                Verb::And => todo!(),
-                Verb::Or => todo!(),
-                Verb::Not => todo!(),
-                Verb::Lt => todo!(),
-                Verb::Lte => todo!(),
-                Verb::Gt => todo!(),
-                Verb::Gte => todo!(),
-                Verb::Eq => todo!(),
-                Verb::Neq => todo!(),
-                Verb::Range => todo!(),
-                Verb::ObjectAccess => todo!(),
+                MathOperators::Add => lhs + rhs,
+                MathOperators::Subtract => lhs - rhs,
+                MathOperators::Multiply => lhs * rhs,
+                MathOperators::Divide => lhs / rhs,
+                MathOperators::Modulo => lhs % rhs,
             };
             Primitives::Number(result)
         }
@@ -525,57 +558,54 @@ fn eval(expr: Expr) -> Primitives {
             eval(*expr);
             Primitives::Eof
         }
-        Expr::MonadicOp { verb: _, expr: _ } => todo!(),
-        Expr::DyadicOp { verb, lhs, rhs } => match verb {
+        Expr::MonadicOp { verb, expr } => match verb {
+            Verb::Not => {
+                let value = eval(*expr);
+                Primitives::Boolean(!value.to_boolean())
+            }
             Verb::Plus => {
-                let lhs = eval(*lhs);
-                let rhs = eval(*rhs);
-                if lhs.is_string() || rhs.is_string() {
-                    return Primitives::String(lhs.concat_string(&rhs));
-                }
-                Primitives::Number(lhs.to_number() + rhs.to_number())
+                let value = eval(*expr);
+                return Primitives::Number(value.to_number());
             }
-            Verb::Increment => todo!(),
-            Verb::Decrement => todo!(),
-            Verb::And => todo!(),
-            Verb::Or => todo!(),
-            Verb::Not => todo!(),
-            Verb::Lt => todo!(),
-            Verb::Lte => todo!(),
-            Verb::Gt => todo!(),
-            Verb::Gte => todo!(),
-            Verb::Eq => todo!(),
-            Verb::Neq => todo!(),
-            Verb::Range => {
-                let lhs = eval(*lhs);
-                let lhs = lhs.to_integer();
-                let rhs = eval(*rhs).to_integer();
+            verb => todo!("Unsupported verb: {:?}", verb),
+        },
+        Expr::DyadicOp { verb, lhs, rhs } => match verb {
+            DyadicVerb::Verb(verb) => match verb {
+                Verb::Plus => {
+                    let lhs = eval(*lhs);
+                    let rhs = eval(*rhs);
+                    if !lhs.is_number() || !rhs.is_number() {
+                        return Primitives::String(lhs.concat_string(&rhs));
+                    }
+                    Primitives::Number(lhs.to_number() + rhs.to_number())
+                }
+                Verb::Range => {
+                    let lhs = eval(*lhs);
+                    let lhs = lhs.to_integer();
+                    let rhs = eval(*rhs).to_integer();
 
-                let result = lhs..rhs;
-                let vec: Vec<Primitives> = result
-                    .into_iter()
-                    .map(|x| Primitives::Number(x as f64))
-                    .collect();
-                Primitives::Array(vec)
-                // Primitives::Number(lhs.to_number() + rhs.to_number())
-            }
-            Verb::Add => todo!(),
-            Verb::Subtract => todo!(),
-            Verb::Multiply => {
-                let lhs = eval(*lhs);
-                let rhs = eval(*rhs);
-                if !lhs.is_number() {
-                    panic!("Unexpected value: {:?}", lhs)
+                    let result = lhs..rhs;
+                    let vec: Vec<Primitives> = result
+                        .into_iter()
+                        .map(|x| Primitives::Number(x as f64))
+                        .collect();
+                    Primitives::Array(vec)
                 }
-                if !rhs.is_number() {
-                    panic!("Unexpected value: {:?}", rhs)
+                _ => todo!(),
+            },
+            DyadicVerb::MathOperators(verb) => match verb {
+                MathOperators::Add => todo!(),
+                MathOperators::Subtract => todo!(),
+                MathOperators::Multiply => {
+                    let lhs = eval(*lhs);
+                    let rhs = eval(*rhs);
+                    let calc = lhs.to_number() * rhs.to_number();
+                    Primitives::Number(calc)
                 }
-                let calc = lhs.to_number() * rhs.to_number();
-                Primitives::Number(calc)
-            }
-            Verb::Divide => todo!(),
-            Verb::Modulo => todo!(),
-            Verb::ObjectAccess => todo!(),
+                MathOperators::Divide => todo!(),
+                MathOperators::Modulo => todo!(),
+            },
+            _ => todo!(),
         },
         Expr::Terms(terms) => {
             let terms = terms.clone();
@@ -640,12 +670,27 @@ impl Primitives {
         match self {
             Primitives::Number(value) => *value,
             Primitives::Null => 0.0,
+            Primitives::Eof => 0.0,
+            Primitives::String(value) => value.parse::<f64>().unwrap_or(std::f64::NAN),
+            Primitives::Boolean(value) => {
+                if *value {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             un => panic!("Expected float, got: {:?}", un),
         }
     }
     pub fn to_boolean(&self) -> bool {
         match self {
             Primitives::Boolean(value) => *value,
+            Primitives::Null => false,
+            Primitives::Eof => false,
+            Primitives::Number(value) => value.is_nan() || value <= &0.0,
+            Primitives::String(value) => !value.is_empty(),
+            Primitives::Array(value) => !value.is_empty(),
+            Primitives::Object(value) => !value.is_empty(),
             _ => panic!("Expected boolean"),
         }
     }

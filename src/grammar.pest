@@ -4,6 +4,7 @@ code = _{ NEWLINE* ~ (expr ~ ";"? ~ NEWLINE+)* ~ expr? }
 // Expression(Generic)
 expr = {
     assgmtExpr
+  | unaryOperation
   | keywords
   | functions
   | monadicExpr
@@ -40,8 +41,9 @@ mathExpr = { atom ~ (operators ~ atom)* }
 // Terms
 terms = { term+ }
 
-term = _{ (objectProp | ident) | "(" ~ expr ~ ")" }
+term = _{ objectProp | ident | "(" ~ expr ~ ")" }
 
+unaryOperation = { (ident ~ unaryOpearators) | (unaryOpearators ~ ident) }
 // Variables
 
 modifier   = { "const" | "let" | "" }
@@ -64,27 +66,35 @@ verb = {
   | neq
   | objectAccess
 }
-// operators
-plus         = { "+" }
-multiply     = { "*" }
+
+// Unary operators
+unaryOpearators = { increment | decrement }
+
+// Unary operators
+
+not          = { "!" }
 increment    = { "++" }
 decrement    = { "--" }
 range        = { ".." }
 objectAccess = { "." }
 
 // Logic operators
+logicOperators = { and | or | lt | lte | gt | gte | eq | neq }
+
 and = { "and" | "&&" }
 or  = { "or" | "||" }
-not = { "!" }
 lt  = { "<" }
 lte = { "<=" }
 gt  = { ">" }
 gte = { ">=" }
 eq  = { "==" }
 neq = { "!=" | "<>" }
+
 // Math operators
 operators = _{ add | subtract | multiply | divide | modulo }
 add       =  { "+" }
+plus      =  { "+" }
+multiply  =  { "*" }
 subtract  =  { "-" }
 divide    =  { "/" }
 modulo    =  { "%" }
@@ -120,7 +130,8 @@ object = {
 objectProp = { ident ~ objectAccess ~ (objectProp | ident) }
 
 pairMultiLine = _{ NEWLINE* ~ (pair ~ ","? ~ NEWLINE+)* ~ pair? }
-pair          =  { (ident | "\"" ~ ident ~ "\"") ~ ":" ~ code }
+
+pair = { (ident | "\"" ~ ident ~ "\"") ~ ":" ~ code }
 
 array = {
     "[" ~ NEWLINE* ~ "]"
