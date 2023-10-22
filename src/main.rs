@@ -16,8 +16,9 @@ lazy_static::lazy_static! {
         PrattParser::new()
             // Addition and subtract have equal precedence
             .op(Op::infix(add, Left) | Op::infix(subtract, Left))
-            .op(Op::infix(multiply, Left) | Op::infix(divide, Left) | Op::infix(modulo, Left))
-            .op(Op::prefix(unary_minus))
+            .op(Op::infix(multiply, Left) | Op::infix(divide, Left) | Op::infix(modulo, Left)| Op::infix(eq, Left))
+            .op(Op::prefix(unary_minus) | Op::prefix(not)| Op::prefix(increment)| Op::prefix(decrement))
+
     };
 }
 
@@ -152,9 +153,11 @@ fn resolve_rule(
             let expr = resolve_rule(expr, var_pool, context_id);
 
             let expr = eval(expr);
-            let to = expr.to_array();
+            let mut array = Vec::with_capacity(1000);
+            array.append(&mut expr.to_array());
+            Vec::dedup(&mut array);
             let local_context_id = generate_context_id();
-            for index in to {
+            for index in array {
                 add_var(
                     var_pool,
                     ident,
@@ -170,6 +173,64 @@ fn resolve_rule(
             }
             delete_context(var_pool, &local_context_id);
             Expr::Null
+        }
+        Rule::ifLogic => {
+            let mut pair = primary.into_inner();
+            let stmt = pair.next().unwrap().as_str();
+            if stmt.trim() != "if" {
+                panic!("Expected if keyword");
+            }
+
+            let expression = pair.next().unwrap();
+            let if_body = pair.next();
+            let else_body = pair.next();
+
+            if if_body.is_some() {
+                let if_body = if_body.unwrap();
+                let expr = expression.to_owned().into_inner();
+                let operations = expr.as_str().split("||");
+                let mut expressions = vec![];
+                for ele in operations {
+                    let value = format!("({})", ele);
+                    expressions.push(value);
+                }
+
+                let expr = expressions.join("||");
+                expressions.clear();
+
+                let operations = expr.as_str().split("&&");
+                let mut expressions = vec![];
+                for ele in operations {
+                    let value = format!("({})", ele);
+                    expressions.push(value);
+                }
+                let expression = expressions.join("&&");
+
+                let pairs = LangParser::parse(Rule::expr, &expression).unwrap();
+
+                let expression = parse_expr(pairs, var_pool, context_id);
+
+                let expression_evaluated = eval(expression).to_boolean();
+
+                for body in if_body.into_inner() {
+                    let body_expressions = body.to_owned();
+                    if expression_evaluated {
+                        let body = resolve_rule(body_expressions.clone(), var_pool, context_id);
+                        eval(body);
+                    }
+                }
+                if else_body.to_owned().is_some() {
+                    if expression_evaluated == false {
+                        let else_body = else_body.unwrap();
+
+                        for body in else_body.into_inner() {
+                            let body = resolve_rule(body, var_pool, context_id);
+                            eval(body);
+                        }
+                    }
+                }
+            }
+            return Expr::Null;
         }
         Rule::expr => parse_expr(primary.into_inner(), var_pool, context_id),
         Rule::number => Expr::Number(primary.as_str().trim().parse::<f64>().unwrap()),
@@ -188,7 +249,7 @@ fn resolve_rule(
         Rule::array => {
             let mut arr = vec![];
             for ele in primary.into_inner() {
-                let ast = parse_expr(ele.into_inner(), var_pool, context_id);
+                let ast = resolve_rule(ele, var_pool, context_id);
                 arr.push(eval(ast));
             }
             Expr::Primitives(Primitives::Array(arr))
@@ -259,9 +320,12 @@ fn resolve_rule(
             Expr::Null
         }
         Rule::monadicExpr => {
+            // println!("Entrou aqui: {}",primary.as_str());
+
             let mut pair = primary.into_inner();
             let verb = pair.next().unwrap();
             let expr = pair.next().unwrap();
+
             parse_monadic_verb(verb, resolve_rule(expr, var_pool, context_id))
         }
         Rule::dyadicExpr => {
@@ -291,7 +355,7 @@ fn resolve_rule(
             let mut pairs = primary.into_inner();
             let ident = pairs.next().unwrap();
             let mut ident = ident.as_str();
-            let mut verb = "";
+            let verb;
             if ["++", "--", "!"].contains(&ident) {
                 verb = ident;
                 ident = pairs.next().unwrap().as_str();
@@ -300,19 +364,17 @@ fn resolve_rule(
             }
             let value = get_var_value(var_pool, ident, context_id);
             let value = eval(value);
-            let value = value.to_number();
+
             let exp = match verb {
                 "++" => {
+                    let value = value.to_number();
                     let value = value + 1.0;
                     Expr::Primitives(Primitives::Number(value))
                 }
                 "--" => {
+                    let value = value.to_number();
                     let value = value - 1.0;
                     Expr::Primitives(Primitives::Number(value))
-                }
-                "!" => {
-                    let value = value.is_nan() || value <= 0.0;
-                    Expr::Primitives(Primitives::Boolean(value))
                 }
                 verb => panic!("Unexpected verb: {}", verb),
             };
@@ -326,6 +388,7 @@ fn resolve_rule(
             let pair = pair.trim();
             Expr::Primitives(Primitives::Boolean(pair == "true"))
         }
+
         rule => unreachable!("Expr::parse expected atom, found {:?}", rule),
     }
 }
@@ -411,7 +474,7 @@ fn add_var(
     }
 }
 
-fn delete_var(var_pool: &mut Vec<Variable>, ident: &str, context_id: &str) {
+pub fn delete_var(var_pool: &mut Vec<Variable>, ident: &str, context_id: &str) {
     let ident = String::from(ident);
     let index = var_pool
         .iter()
@@ -465,9 +528,16 @@ fn parse_dyadic_verb(pair: pest::iterators::Pair<Rule>, lhs: Expr, rhs: Expr) ->
             "+" => DyadicVerb::Verb(Verb::Plus),
             "!" => DyadicVerb::Verb(Verb::Not),
             "!=" => DyadicVerb::Verb(Verb::Neq),
+            "<>" => DyadicVerb::Verb(Verb::Neq),
             "==" => DyadicVerb::Verb(Verb::Eq),
             ".." => DyadicVerb::Verb(Verb::Range),
             "." => DyadicVerb::Verb(Verb::ObjectAccess),
+            "<" => DyadicVerb::Verb(Verb::Lt),
+            ">" => DyadicVerb::Verb(Verb::Gt),
+            "<=" => DyadicVerb::Verb(Verb::Lte),
+            ">=" => DyadicVerb::Verb(Verb::Gte),
+            "&&" => DyadicVerb::Verb(Verb::And),
+            "||" => DyadicVerb::Verb(Verb::Or),
             verb => match verb {
                 "*" => DyadicVerb::MathOperators(MathOperators::Multiply),
                 "/" => DyadicVerb::MathOperators(MathOperators::Divide),
@@ -526,7 +596,6 @@ pub enum Primitives {
     Array(Vec<Primitives>),
     Object(HashMap<String, Primitives>),
     Null,
-    Eof,
 }
 
 fn eval(expr: Expr) -> Primitives {
@@ -551,17 +620,27 @@ fn eval(expr: Expr) -> Primitives {
         Expr::String(value) => Primitives::String(value),
         Expr::Primitives(value) => value,
         Expr::IsGlobal {
-            modifier,
-            ident,
+            modifier: _,
+            ident: _,
             expr,
         } => {
             eval(*expr);
-            Primitives::Eof
+            Primitives::Null
         }
         Expr::MonadicOp { verb, expr } => match verb {
             Verb::Not => {
                 let value = eval(*expr);
-                Primitives::Boolean(!value.to_boolean())
+                match value {
+                    Primitives::String(value) => Primitives::Boolean(value.is_empty()),
+                    Primitives::Boolean(value) => Primitives::Boolean(!value),
+                    Primitives::Number(value) => {
+                        let value = value.is_nan() || value <= 0.0;
+                        Primitives::Boolean(value)
+                    }
+                    Primitives::Array(value) => Primitives::Boolean(value.is_empty()),
+                    Primitives::Object(value) => Primitives::Boolean(value.is_empty()),
+                    Primitives::Null => Primitives::Boolean(false),
+                }
             }
             Verb::Plus => {
                 let value = eval(*expr);
@@ -591,21 +670,100 @@ fn eval(expr: Expr) -> Primitives {
                         .collect();
                     Primitives::Array(vec)
                 }
-                _ => todo!(),
-            },
-            DyadicVerb::MathOperators(verb) => match verb {
-                MathOperators::Add => todo!(),
-                MathOperators::Subtract => todo!(),
-                MathOperators::Multiply => {
+                Verb::Lt => {
+                    let lhs = eval(*lhs);
+
+                    let rhs = eval(*rhs);
+
+                    if lhs.is_number() && rhs.is_number() {
+                        return Primitives::Boolean(lhs.to_number() < rhs.to_number());
+                    }
+
+                    if lhs.is_string() && rhs.is_string() {
+                        return Primitives::Boolean(lhs.to_string() < rhs.to_string());
+                    }
+
+                    return Primitives::Boolean(false);
+                }
+                Verb::Gt => {
+                    let lhs = eval(*lhs);
+
+                    let rhs = eval(*rhs);
+
+                    if lhs.is_number() && rhs.is_number() {
+                        return Primitives::Boolean(lhs.to_number() > rhs.to_number());
+                    }
+
+                    if lhs.is_string() && rhs.is_string() {
+                        return Primitives::Boolean(lhs.to_string() > rhs.to_string());
+                    }
+
+                    return Primitives::Boolean(false);
+                }
+                Verb::Lte => {
                     let lhs = eval(*lhs);
                     let rhs = eval(*rhs);
-                    let calc = lhs.to_number() * rhs.to_number();
-                    Primitives::Number(calc)
+
+                    if lhs.is_number() && rhs.is_number() {
+                        return Primitives::Boolean(lhs.to_number() <= rhs.to_number());
+                    }
+                    if lhs.is_string() && rhs.is_string() {
+                        return Primitives::Boolean(lhs.to_string() <= rhs.to_string());
+                    }
+                    return Primitives::Boolean(false);
                 }
-                MathOperators::Divide => todo!(),
-                MathOperators::Modulo => todo!(),
+                Verb::Gte => {
+                    let lhs: Primitives = eval(*lhs);
+                    let rhs = eval(*rhs);
+                    if lhs.is_number() && rhs.is_number() {
+                        return Primitives::Boolean(lhs.to_number() >= rhs.to_number());
+                    }
+                    if lhs.is_string() && rhs.is_string() {
+                        return Primitives::Boolean(lhs.to_string() >= rhs.to_string());
+                    }
+                    return Primitives::Boolean(false);
+                }
+                Verb::Eq => {
+                    let lhs: Primitives = eval(*lhs);
+                    let rhs = eval(*rhs);
+
+                    if lhs.is_number() && rhs.is_number() {
+                        return Primitives::Boolean(lhs.to_number() == rhs.to_number());
+                    }
+                    if lhs.is_string() && rhs.is_string() {
+                        return Primitives::Boolean(lhs.to_string() == rhs.to_string());
+                    }
+
+                    if lhs.is_boolean() && rhs.is_boolean() {
+                        return Primitives::Boolean(lhs.to_boolean() == rhs.to_boolean());
+                    }
+                    return Primitives::Boolean(lhs.to_boolean() == rhs.to_boolean());
+                }
+                Verb::And => {
+                    let lhs = eval(*lhs);
+                    let rhs = eval(*rhs);
+                    Primitives::Boolean(lhs.to_boolean() && rhs.to_boolean())
+                }
+                Verb::Or => {
+                    let lhs = eval(*lhs);
+                    let rhs = eval(*rhs);
+                    Primitives::Boolean(lhs.to_boolean() || rhs.to_boolean())
+                }
+                _ => todo!(),
             },
-            _ => todo!(),
+            DyadicVerb::MathOperators(verb) => {
+                let lhs = eval(*lhs);
+                let rhs = eval(*rhs);
+                let lhs = lhs.to_number();
+                let rhs = rhs.to_number();
+                Primitives::Number(match verb {
+                    MathOperators::Add => lhs + rhs,
+                    MathOperators::Subtract => lhs - rhs,
+                    MathOperators::Multiply => lhs * rhs,
+                    MathOperators::Divide => lhs / rhs,
+                    MathOperators::Modulo => lhs % rhs,
+                })
+            }
         },
         Expr::Terms(terms) => {
             let terms = terms.clone();
@@ -618,14 +776,14 @@ fn eval(expr: Expr) -> Primitives {
                 for ele in terms {
                     eval(ele);
                 }
-                Primitives::Eof
+                Primitives::Null
             }
         },
         Expr::Print(value) => {
             println!("{}", eval(*value).to_string());
-            Primitives::Eof
+            Primitives::Null
         }
-        Expr::Null => Primitives::Eof,
+        Expr::Null => Primitives::Null,
     }
 }
 
@@ -638,7 +796,6 @@ impl Primitives {
             Primitives::Array(value) => serialize_jsonvalue(&Primitives::Array(value.to_owned())),
             Primitives::Object(value) => serialize_jsonvalue(&Primitives::Object(value.to_owned())),
             Primitives::Null => "null".to_owned(),
-            Primitives::Eof => "".to_owned(),
         }
     }
 
@@ -650,7 +807,6 @@ impl Primitives {
             Primitives::Array(value) => serialize_jsonvalue(&Primitives::Array(value.to_owned())),
             Primitives::Object(value) => serialize_jsonvalue(&Primitives::Object(value.to_owned())),
             Primitives::Null => "null".to_owned(),
-            Primitives::Eof => "".to_owned(),
         }
     }
 
@@ -670,7 +826,6 @@ impl Primitives {
         match self {
             Primitives::Number(value) => *value,
             Primitives::Null => 0.0,
-            Primitives::Eof => 0.0,
             Primitives::String(value) => value.parse::<f64>().unwrap_or(std::f64::NAN),
             Primitives::Boolean(value) => {
                 if *value {
@@ -686,12 +841,10 @@ impl Primitives {
         match self {
             Primitives::Boolean(value) => *value,
             Primitives::Null => false,
-            Primitives::Eof => false,
             Primitives::Number(value) => value.is_nan() || value <= &0.0,
             Primitives::String(value) => !value.is_empty(),
             Primitives::Array(value) => !value.is_empty(),
             Primitives::Object(value) => !value.is_empty(),
-            _ => panic!("Expected boolean"),
         }
     }
     pub fn to_array(&self) -> Vec<Primitives> {
@@ -700,6 +853,7 @@ impl Primitives {
             _ => panic!("Expected array"),
         }
     }
+
     pub fn to_object(&self) -> HashMap<String, Primitives> {
         match self {
             Primitives::Object(value) => value.to_owned(),
@@ -743,12 +897,6 @@ impl Primitives {
             _ => false,
         }
     }
-    pub fn is_eof(&self) -> bool {
-        match self {
-            Primitives::Eof => true,
-            _ => false,
-        }
-    }
 }
 
 fn serialize_jsonvalue(val: &Primitives) -> String {
@@ -770,7 +918,6 @@ fn serialize_jsonvalue(val: &Primitives) -> String {
         Number(n) => format!("{}", n),
         Boolean(b) => format!("{}", b),
         Null => format!("null"),
-        Eof => "".to_owned(),
     }
 }
 

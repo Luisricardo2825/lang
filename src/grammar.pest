@@ -4,8 +4,8 @@ code = _{ NEWLINE* ~ (expr ~ ";"? ~ NEWLINE+)* ~ expr? }
 // Expression(Generic)
 expr = {
     assgmtExpr
-  | unaryOperation
   | keywords
+  | unaryOperation
   | functions
   | monadicExpr
   | dyadicExpr
@@ -16,25 +16,34 @@ expr = {
 // Keywords
 keywords = {
     forLoop
+  | ifLogic
 }
 
 functions = {
     print
 }
 
-stmt    = {
+stmt = {
     "const"
   | "let"
   | "for"
+  | "if"
+  | "else if"
+  | "else"
 }
-print   = { "print" ~ "(" ~ code ~ ")" }
+// Functions
+print = { "print" ~ "(" ~ code ~ ")" }
+
+// Keywords logic
 forLoop = { stmt ~ ident ~ "in" ~ expr ~ NEWLINE* ~ "{" ~ code ~ "}" }
+ifLogic = { stmt ~ ("(" ~ expr ~ ")" | expr) ~ NEWLINE* ~ block ~ NEWLINE* ~ ("else" ~ NEWLINE* ~ block)? }
+
+block = { "{" ~ code ~ "}" }
 
 // expressions(Logic)
 monadicExpr = { verb ~ expr }
 
-dyadicExpr = { (monadicExpr | terms | number | string) ~ verb ~ expr }
-
+dyadicExpr = { (boolean | monadicExpr | terms | number | string) ~ (logicOperators | verb) ~ expr }
 // Math expression
 mathExpr = { atom ~ (operators ~ atom)* }
 
@@ -55,15 +64,7 @@ verb = {
   | range
   | increment
   | decrement
-  | and
-  | or
   | not
-  | lt
-  | lte
-  | gt
-  | gte
-  | eq
-  | neq
   | objectAccess
 }
 

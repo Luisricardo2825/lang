@@ -1,5 +1,11 @@
-let count = "10"
-let hasItems = false
+let count = 1
+let flag = !"olá" // false(Não é vazio)
+let regra = 1; // false(11 não é igual a 10)
 
-hasItems = !10
-print("Possui intens?"+hasItems+count)
+    if(count>0){
+        print("Entrou no if:"+count)
+    }else{
+        count= 10
+    }
+
+    print("Valor count:"+count)
