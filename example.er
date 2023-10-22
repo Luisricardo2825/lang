@@ -1,11 +1,31 @@
-let count = 1
-let flag = !"olá" // false(Não é vazio)
-let regra = 1; // false(11 não é igual a 10)
+let data = [
+	{
+		"name": "Arden Santana",
+		"numberrange": 9
+	},
+	{
+		"name": "Baxter Kent",
+		"numberrange": 5
+	},
+	{
+		"name": "Baker Williamson",
+		"numberrange": 3
+	},
+	{
+		"name": "Aladdin Mullins",
+		"numberrange": 6
+	},
+	{
+		"name": "Baxter Horn",
+		"numberrange": 4
+	}
+];
 
-    if(count>0){
-        print("Entrou no if:"+count)
-    }else{
-        count= 10
+let names = "";
+for user in data {
+    if user.numberrange > 3 {
+        names= names+"\n\r"+user.name+"-"+user.numberrange;
     }
+}
 
-    print("Valor count:"+count)
+print(names)
