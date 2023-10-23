@@ -4,9 +4,9 @@ code = _{ NEWLINE* ~ (expr ~ ";"? ~ NEWLINE+)* ~ expr? }
 // Expression(Generic)
 expr = {
     assgmtExpr
-  | keywords
   | unaryOperation
   | functions
+  | keywords
   | monadicExpr
   | dyadicExpr
   | value
@@ -17,6 +17,8 @@ expr = {
 keywords = {
     forLoop
   | ifLogic
+  | fnCall
+  | functionLogic
 }
 
 functions = {
@@ -30,15 +32,22 @@ stmt = {
   | "if"
   | "else if"
   | "else"
+  | "fn"
 }
 // Functions
 print = { "print" ~ "(" ~ code ~ ")" }
 
 // Keywords logic
 forLoop = { stmt ~ ident ~ "in" ~ expr ~ NEWLINE* ~ "{" ~ code ~ "}" }
-ifLogic = { stmt ~ ("(" ~ expr ~ ")" | expr) ~ NEWLINE* ~ block ~ NEWLINE* ~ ("else" ~ NEWLINE* ~ block)? }
 
-block = { "{" ~ code ~ "}" }
+ifLogic = { "if" ~ ("(" ~ expr ~ ")" | expr) ~ (NEWLINE | WHITESPACE)* ~ block ~ ("else" ~ NEWLINE* ~ block)? }
+
+functionLogic = { stmt ~ ident ~ "(" ~ functionArgs? ~ ")" ~ NEWLINE* ~ block? }
+fnCall        = { ident ~ "(" ~ functionArgs? ~ ")" }
+functionArgs  = { NEWLINE* ~ (code) ~ ("," ~ (code))* }
+
+// Code block
+block = _{ "{" ~ code ~ "}" }
 
 // expressions(Logic)
 monadicExpr = { verb ~ expr }
@@ -52,7 +61,7 @@ terms = { term+ }
 
 term = _{ objectProp | ident | "(" ~ expr ~ ")" }
 
-unaryOperation = { (ident ~ unaryOpearators) | (unaryOpearators ~ ident) }
+unaryOperation = { ((value | ident) ~ unaryOpearators) | (unaryOpearators ~ (ident | value)) }
 // Variables
 
 modifier   = { "const" | "let" | "" }
@@ -104,7 +113,9 @@ modulo    =  { "%" }
 ident = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "_")* }
 
 // value types
-value = { objectProp | object | array | string | mathExpr | boolean | null | ident }
+value = { fnCall | objectProp | object | array | string | mathExpr | boolean | null | ident }
+
+// Parsers
 
 // Simple
 

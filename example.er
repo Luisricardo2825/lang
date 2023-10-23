@@ -1,31 +1,8 @@
-let data = [
-	{
-		"name": "Arden Santana",
-		"numberrange": 9
-	},
-	{
-		"name": "Baxter Kent",
-		"numberrange": 5
-	},
-	{
-		"name": "Baker Williamson",
-		"numberrange": 3
-	},
-	{
-		"name": "Aladdin Mullins",
-		"numberrange": 6
-	},
-	{
-		"name": "Baxter Horn",
-		"numberrange": 4
-	}
-];
+let n1 = 10
+let n2 = 10
 
-let names = "";
-for user in data {
-    if user.numberrange > 3 {
-        names= names+"\n\r"+user.name+"-"+user.numberrange;
-    }
+if true {
+	print("Soma:")
+}else{
+	print("Subtração:")
 }
-
-print(names)
