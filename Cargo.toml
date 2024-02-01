@@ -4,9 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.dev]
+opt-level = 3
+[profile.release]
+opt-level = 3
 
 [dependencies]
 lazy_static = "1.4.0"
 pest = "2.7.4"
 pest_derive = "2.7.4"
 rand = "0.8.5"
+rayon = "1.8.0"

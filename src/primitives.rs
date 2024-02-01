@@ -8,7 +8,7 @@ pub enum Primitives {
     Boolean(bool),
     Number(f64),
     Array(Vec<Primitives>),
-    Object(HashMap<String, Primitives>),
+    Object(Vec<(String, Primitives)>),
     Null,
     Void,
 }
@@ -84,7 +84,7 @@ impl Primitives {
         }
     }
 
-    pub fn to_object(&self) -> HashMap<String, Primitives> {
+    pub fn to_object(&self) -> Vec<(String, Primitives)> {
         match self {
             Primitives::Object(value) => value.to_owned(),
             _ => panic!("Expected object"),
@@ -139,13 +139,13 @@ fn serialize_jsonvalue(val: &Primitives) -> String {
     match val {
         Object(o) => {
             let contents: Vec<_> = o
-                .iter()
+                .into_iter()
                 .map(|(name, value)| format!("\"{}\":{}", name, serialize_jsonvalue(value)))
                 .collect();
             format!("{{{}}}", contents.join(","))
         }
         Array(a) => {
-            let contents: Vec<_> = a.iter().map(serialize_jsonvalue).collect();
+            let contents: Vec<_> = a.into_iter().map(serialize_jsonvalue).collect();
             format!("[{}]", contents.join(","))
         }
         String(s) => format!("\"{}\"", s),

@@ -98,25 +98,37 @@ pub(crate) fn resolve_rule(
 
             let expr = eval(expr, var_pool);
             let mut array = Vec::with_capacity(1000);
+            let mut terms = vec![];
             array.append(&mut expr.to_array());
             Vec::dedup(&mut array);
             let local_context_id = generate_context_id();
-            for index in array {
+            let mut prev_context_id = local_context_id.clone();
+            array.iter().for_each(|index| {
+                let value = index.to_owned();
+                let for_block_context_id = generate_context_id();
+
                 varpool::add_var(
                     var_pool,
                     ident,
                     "",
-                    &&Expr::Primitives(index),
-                    &local_context_id,
+                    &&Expr::Primitives(value),
+                    &prev_context_id,
                 );
                 for body in pair.clone() {
                     let body = body.into_inner();
-                    let body = parse_expr(body, var_pool, &local_context_id);
-                    eval(body, var_pool);
+                    let body = parse_expr(body, var_pool, &prev_context_id);
+                    // eval(body, var_pool);
+                    terms.push(body);
                 }
+                prev_context_id = for_block_context_id;
+            });
+
+            // varpool::delete_context(var_pool, &local_context_id);
+            Expr::IsGlobal {
+                expr: Box::new(Expr::Terms(terms)),
+                ident: local_context_id.to_owned(),
+                modifier: "for".to_owned(),
             }
-            varpool::delete_context(var_pool, &local_context_id);
-            Expr::Void
         }
         Rule::ifLogic => {
             // TODO: Correção do IF
@@ -196,14 +208,14 @@ pub(crate) fn resolve_rule(
             Expr::Primitives(primitives::Primitives::Array(arr))
         }
         Rule::object => {
-            let mut obj = HashMap::new();
+            let mut obj = vec![];
             for ele in primary.into_inner() {
                 let mut pair = ele.into_inner();
                 let key = pair.next().unwrap();
                 let value = pair.next().unwrap_or(key.clone());
                 let key = key.as_str();
                 let value = resolve_rule(value, var_pool, context_id);
-                obj.insert(String::from(key), eval(value, var_pool));
+                obj.push((String::from(key), eval(value, var_pool)));
             }
             Expr::Primitives(primitives::Primitives::Object(obj))
         }
@@ -220,16 +232,18 @@ pub(crate) fn resolve_rule(
             let mut count = 0;
             let size = props.len();
             for ele in props {
-                let ob_value = object
-                    .get(ele)
-                    .unwrap_or(&primitives::Primitives::Null)
-                    .to_owned();
-                if ob_value.is_object() {
-                    object = ob_value.to_object();
+                let ob_value = object.clone().into_iter().find(|x| x.0 == ele);
+
+                if ob_value.is_some() {
+                    let ob_value = ob_value.unwrap().1;
+                    if ob_value.is_object() {
+                        object = ob_value.to_object();
+                    }
+                    if count == size - 1 {
+                        value = ob_value.to_owned();
+                    }
                 }
-                if count == size - 1 {
-                    value = ob_value.to_owned();
-                }
+
                 count += 1;
             }
             Expr::Primitives(value)
@@ -257,7 +271,7 @@ pub(crate) fn resolve_rule(
                 context_id: context_id.to_owned(),
             }
         }
-        Rule::assgmtExpr => {
+        Rule::declarationExpr => {
             let mut pair = primary.into_inner();
             let stmt = pair.next().unwrap().as_str();
 
@@ -268,18 +282,42 @@ pub(crate) fn resolve_rule(
             let expr = resolve_rule(expr, var_pool, context_id);
 
             let ident = ident.as_str();
-
-            let var = varpool::add_var(
-                var_pool,
-                ident,
-                stmt,
-                &expr,
-                context_id,
-            );
+            if ident == "ret" {
+                println!("{ident} {context_id}");
+            }
+            let var = varpool::add_var(var_pool, ident, stmt, &expr, context_id);
             Expr::Identifier {
                 name: var.ident,
                 expr: Box::new(var.value),
                 modifier: stmt.to_owned(),
+                context_id: var.context_id,
+            }
+        }
+        Rule::assgmtExpr => {
+            let mut pair = primary.into_inner();
+
+            let ident = pair.next().unwrap();
+
+            let expr = pair.next().unwrap();
+
+            let expr = resolve_rule(expr, var_pool, context_id);
+
+            let ident = ident.as_str();
+
+            let mut var: Option<Variable> = None;
+            let contexts = varpool::get_contexts(var_pool);
+            for context in contexts {
+                var = varpool::get_var(var_pool, ident, &context);
+                if var.is_some() {
+                    println!("{ident} {context} assgmtExpr");
+                    break;
+                }
+            }
+            let var = var.unwrap();
+            Expr::Identifier {
+                name: var.ident,
+                expr: Box::new(expr),
+                modifier: "".to_owned(),
                 context_id: var.context_id,
             }
         }
@@ -447,6 +485,8 @@ pub(crate) fn resolve_rule(
             }
             Expr::Terms(terms)
         }
+        Rule::null => Expr::Null,
+        Rule::EOI => Expr::Void,
         rule => unreachable!("Expr::parse expected atom, found {:?}", rule),
     }
 }

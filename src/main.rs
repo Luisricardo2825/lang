@@ -115,7 +115,6 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
 
                         let result = lhs..rhs;
                         let vec: Vec<primitives::Primitives> = result
-                            .into_iter()
                             .map(|x| primitives::Primitives::Number(x as f64))
                             .collect();
                         primitives::Primitives::Array(vec)
@@ -220,8 +219,10 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
         }
         ast::Expr::Terms(terms) => {
             let terms = terms.clone();
-            let terms: Vec<primitives::Primitives> =
-                terms.into_iter().map(|x| eval(x, var_pool)).collect();
+            let terms: Vec<primitives::Primitives> = terms
+                .into_iter()
+                .map(|x| eval(x.to_owned(), &mut var_pool.clone()))
+                .collect();
             return terms.last().unwrap().to_owned();
         }
         ast::Expr::Print(value) => {
@@ -244,6 +245,7 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             for ele in args {
                 eval(ele, var_pool);
             }
+            println!("função {name} do contexto {context_id} foi executada");
             eval(Expr::Terms(body), var_pool)
         }
         ast::Expr::Identifier {
@@ -263,5 +265,6 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
                 }
             }
         }
+        Expr::Null => primitives::Primitives::Null,
     }
 }

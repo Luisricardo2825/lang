@@ -28,7 +28,6 @@ pub enum MathOperators {
     Modulo,
 }
 
-
 #[derive(PartialEq, Debug, Clone)]
 pub enum Expr {
     Print(Box<Expr>),
@@ -76,6 +75,7 @@ pub enum Expr {
         body: Vec<Expr>,
     },
     Void,
+    Null,
 }
 
 #[derive(PartialEq, Debug, Clone)]

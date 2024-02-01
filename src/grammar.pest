@@ -3,7 +3,8 @@ program = _{ SOI ~ code ~ EOI }
 code = _{ NEWLINE* ~ (expr ~ ";"? ~ NEWLINE+)* ~ expr? }
 // Expression(Generic)
 expr = {
-    assgmtExpr
+    declarationExpr
+  | assgmtExpr
   | unaryOperation
   | functions
   | keywords
@@ -64,8 +65,9 @@ term = _{ objectProp | ident | "(" ~ expr ~ ")" }
 unaryOperation = { ((value | ident) ~ unaryOpearators) | (unaryOpearators ~ (ident | value)) }
 // Variables
 
-modifier   = { "const" | "let" | "" }
-assgmtExpr = { modifier ~ ident ~ "=" ~ expr }
+modifier        = { "const" | "let" }
+declarationExpr = { modifier ~ ident ~ "=" ~ expr }
+assgmtExpr      = { ident ~ "=" ~ expr }
 
 verb = {
     plus
