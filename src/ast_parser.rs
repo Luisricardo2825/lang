@@ -92,43 +92,32 @@ pub(crate) fn resolve_rule(
                 panic!("Expected for loop");
             }
             let ident = pair.next().unwrap();
-            let ident = ident.as_str();
+            let ident = ident.as_str().to_string();
             let expr = pair.next().unwrap();
             let expr = resolve_rule(expr, var_pool, context_id);
-
-            let expr = eval(expr, var_pool);
-            let mut array = Vec::with_capacity(1000);
             let mut terms = vec![];
-            array.append(&mut expr.to_array());
-            Vec::dedup(&mut array);
             let local_context_id = generate_context_id();
-            let mut prev_context_id = local_context_id.clone();
-            array.iter().for_each(|index| {
-                let value = index.to_owned();
-                let for_block_context_id = generate_context_id();
 
-                varpool::add_var(
-                    var_pool,
-                    ident,
-                    "",
-                    &&Expr::Primitives(value),
-                    &prev_context_id,
-                );
-                for body in pair.clone() {
-                    let body = body.into_inner();
-                    let body = parse_expr(body, var_pool, &prev_context_id);
-                    // eval(body, var_pool);
-                    terms.push(body);
-                }
-                prev_context_id = for_block_context_id;
-            });
-
-            // varpool::delete_context(var_pool, &local_context_id);
-            Expr::IsGlobal {
-                expr: Box::new(Expr::Terms(terms)),
-                ident: local_context_id.to_owned(),
-                modifier: "for".to_owned(),
+            for body in pair.clone() {
+                let body = body.into_inner();
+                let body = parse_expr(body, var_pool, &local_context_id);
+                // eval(body, var_pool);
+                terms.push(body);
             }
+
+            Expr::Statments(Statments::For {
+                variable: Box::new(Variable {
+                    context_id: local_context_id.clone(),
+                    value: Expr::Null,
+                    is_const: false,
+                    is_func: false,
+                    ident,
+                }),
+                rule: Box::new(expr),
+                body: Box::new(Expr::Terms(terms)),
+                context_id: local_context_id,
+                step: Some(Box::new(Expr::Void)),
+            })
         }
         Rule::ifLogic => {
             // TODO: Correção do IF
@@ -253,21 +242,26 @@ pub(crate) fn resolve_rule(
             // get value from var_pool
             let ident = primary.as_str();
             let ident = ident.trim();
-            let var = varpool::get_var_value(var_pool, ident, context_id).unwrap_or(Variable {
-                context_id: context_id.to_string(),
-                ident: ident.to_string(),
-                is_const: false,
-                is_func: false,
-                value: Expr::Void,
-            });
-            if var.is_func {
-                panic!("{} is'nt a variable", var.ident);
+            let var = varpool::get_var_value(var_pool, ident, context_id);
+            if var.is_err() {
+                panic!("Variable {} doesn't exist", ident)
             }
+
+            let var = var.unwrap();
 
             Expr::Identifier {
                 name: ident.to_owned(),
                 expr: Box::new(var.value),
-                modifier: "".to_owned(),
+                modifier: (if var.is_const {
+                    "const"
+                } else {
+                    if var.is_func {
+                        "fn"
+                    } else {
+                        "let"
+                    }
+                })
+                .to_owned(),
                 context_id: context_id.to_owned(),
             }
         }
@@ -282,11 +276,9 @@ pub(crate) fn resolve_rule(
             let expr = resolve_rule(expr, var_pool, context_id);
 
             let ident = ident.as_str();
-            if ident == "ret" {
-                println!("{ident} {context_id}");
-            }
+
             let var = varpool::add_var(var_pool, ident, stmt, &expr, context_id);
-            Expr::Identifier {
+            Expr::VarDeclaration {
                 name: var.ident,
                 expr: Box::new(var.value),
                 modifier: stmt.to_owned(),
@@ -309,15 +301,23 @@ pub(crate) fn resolve_rule(
             for context in contexts {
                 var = varpool::get_var(var_pool, ident, &context);
                 if var.is_some() {
-                    println!("{ident} {context} assgmtExpr");
                     break;
                 }
             }
             let var = var.unwrap();
-            Expr::Identifier {
+            Expr::Assigment {
                 name: var.ident,
                 expr: Box::new(expr),
-                modifier: "".to_owned(),
+                modifier: (if var.is_const {
+                    "const"
+                } else {
+                    if var.is_func {
+                        "fn"
+                    } else {
+                        "let"
+                    }
+                })
+                .to_owned(),
                 context_id: var.context_id,
             }
         }
@@ -403,16 +403,28 @@ pub(crate) fn resolve_rule(
             let args = pairs;
             let mut arguments: Vec<Expr> = vec![];
             let mut body_exprs: Vec<Expr> = vec![];
-            let mut count = 0;
             let local_context = generate_context_id();
+
             for arg in args {
                 let argument = resolve_rule(arg, var_pool, &local_context);
-                if argument.is_terms() && count == 0 {
-                    arguments.append(&mut argument.to_terms())
-                } else {
-                    body_exprs.push(argument);
-                }
-                count += 1;
+                body_exprs.push(argument);
+            }
+
+            let vars = varpool::get_all_vars_from_context(var_pool, &local_context);
+            println!("vars: {vars:?}");
+            for ele in vars {
+                let var = ele;
+                let name = var.ident.clone();
+                let expr = var.value.clone();
+                let context_id = var.context_id.clone();
+                let var = varpool::add_var(var_pool, &name, "", &expr, &context_id);
+                let expr = Expr::VarDeclaration {
+                    name: var.ident,
+                    expr: Box::new(var.value),
+                    modifier: "".to_owned(),
+                    context_id: var.context_id,
+                };
+                arguments.push(expr)
             }
 
             let func = Expr::Fn {
@@ -433,32 +445,40 @@ pub(crate) fn resolve_rule(
 
             let args_values = pairs.next().unwrap().as_str();
             let body = varpool::get_var_value(var_pool, &name, context_id).unwrap();
-            let context_id = body.context_id;
-            let (args, body) = body.value.to_fn();
+            let (args, body, context_id) = body.value.to_fn();
+            let concated = "[".to_owned() + args_values + "]";
 
-            let args_values: Vec<&str> = args_values.split(",").collect();
-            let mut terms = vec![];
-            let mut index = 0;
-            for ele in args_values {
-                let arg = args.get(index);
-                if arg.is_some() {
-                    let (name, expr, modifier, context_id) = arg.unwrap().to_identifier();
-                    let pair = LangParser::parse(Rule::program, ele).unwrap();
+            let args_pair = LangParser::parse(Rule::program, &concated).unwrap();
 
-                    add_var(var_pool, &name, &modifier, &*expr, &context_id);
-                    let value = Box::new(parse_expr(pair, var_pool, &context_id));
-
-                    let var = add_var(var_pool, &name, &modifier, &value, &context_id);
-
-                    let expr = Expr::Identifier {
-                        name: var.ident,
-                        expr: Box::new(var.value),
-                        modifier: modifier,
-                        context_id: var.context_id,
-                    };
-                    terms.push(expr);
+            let mut args_expr = Expr::Null;
+            for pair in args_pair {
+                let str = pair.as_str();
+                if str.len() <= 0 {
+                    continue;
                 }
 
+                args_expr = resolve_rule(pair, var_pool, &context_id);
+            }
+
+            let args_values = args_expr.to_primitive().to_array();
+
+            let mut terms = vec![];
+            let mut index = 0;
+            for ele in args {
+                let var = ele.to_var();
+                let value = args_values.get(index);
+                if value.is_some() {
+                    let value =
+                        Box::new(Expr::Primitives(args_values.get(index).unwrap().to_owned()));
+                    let expr = Expr::Assigment {
+                        name: var.0.clone(),
+                        expr: value.clone(),
+                        modifier: "const".to_owned(),
+                        context_id: context_id.clone(),
+                    };
+                    varpool::add_var(var_pool, &var.0, "const", &value, &context_id);
+                    terms.push(expr);
+                }
                 index += 1;
             }
 
@@ -473,17 +493,20 @@ pub(crate) fn resolve_rule(
             let pairs = primary.into_inner();
             let args = pairs.as_str();
             let args: Vec<&str> = args.split(",").collect();
-            let mut terms = vec![];
             for ele in args {
-                let expr = Expr::Identifier {
-                    name: ele.to_owned(),
-                    expr: Box::new(Expr::Void),
-                    modifier: "let".to_owned(),
-                    context_id: context_id.to_owned(),
-                };
-                terms.push(expr);
+                varpool::add_var(var_pool, ele, "let", &Expr::Null, context_id);
             }
-            Expr::Terms(terms)
+            Expr::Void
+        }
+        Rule::argsList => {
+            let pairs = primary.into_inner();
+            let args = pairs.as_str();
+            let args: Vec<&str> = args.split(",").collect();
+
+            for ele in args {
+                varpool::add_var(var_pool, ele.trim(), "let", &Expr::Null, context_id);
+            }
+            Expr::Void
         }
         Rule::null => Expr::Null,
         Rule::EOI => Expr::Void,

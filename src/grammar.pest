@@ -13,6 +13,7 @@ expr = {
   | value
   | terms
   | mathExpr
+  | argsList
 }
 // Keywords
 keywords = {
@@ -43,12 +44,13 @@ forLoop = { stmt ~ ident ~ "in" ~ expr ~ NEWLINE* ~ "{" ~ code ~ "}" }
 
 ifLogic = { "if" ~ ("(" ~ expr ~ ")" | expr) ~ (NEWLINE | WHITESPACE)* ~ block ~ ("else" ~ NEWLINE* ~ block)? }
 
-functionLogic = { stmt ~ ident ~ "(" ~ functionArgs? ~ ")" ~ NEWLINE* ~ block? }
+functionLogic = { stmt ~ ident ~ "(" ~ functionArgs? ~ ")" ~ NEWLINE* ~ block }
 fnCall        = { ident ~ "(" ~ functionArgs? ~ ")" }
 functionArgs  = { NEWLINE* ~ (code) ~ ("," ~ (code))* }
+argsList      = { NEWLINE* ~ (ident ~ "," ~ NEWLINE+)* ~ ident? }
 
 // Code block
-block = _{ "{" ~ code ~ "}" }
+block = _{ "{" ~ code  ~ "}" }
 
 // expressions(Logic)
 monadicExpr = { verb ~ expr }

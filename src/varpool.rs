@@ -107,6 +107,9 @@ pub fn delete_var(var_pool: &mut Vec<Variable>, ident: &str, context_id: &str) {
 }
 
 pub fn delete_context(var_pool: &mut Vec<Variable>, context_id: &str) {
+    if context_id == "global" {
+        return;
+    }
     var_pool.retain(|x| x.context_id != context_id);
 }
 

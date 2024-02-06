@@ -1,4 +1,4 @@
-use crate::primitives;
+use crate::{primitives, varpool::Variable};
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum Verb {
@@ -33,6 +33,18 @@ pub enum Expr {
     Print(Box<Expr>),
     Terms(Vec<Expr>),
     Identifier {
+        name: String,
+        expr: Box<Expr>,
+        modifier: String,
+        context_id: String,
+    },
+    VarDeclaration {
+        name: String,
+        expr: Box<Expr>,
+        modifier: String,
+        context_id: String,
+    },
+    Assigment {
         name: String,
         expr: Box<Expr>,
         modifier: String,
@@ -74,8 +86,20 @@ pub enum Expr {
         context_id: String,
         body: Vec<Expr>,
     },
+    Statments(Statments),
     Void,
     Null,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum Statments {
+    For {
+        variable: Box<Variable>,
+        rule: Box<Expr>,
+        body: Box<Expr>,
+        context_id: String,
+        step: Option<Box<Expr>>,
+    },
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -97,6 +121,12 @@ impl Expr {
             _ => false,
         }
     }
+    pub fn is_void(&self) -> bool {
+        match self {
+            Expr::Void => true,
+            _ => false,
+        }
+    }
     pub fn to_terms(&self) -> Vec<Expr> {
         match self {
             Expr::Terms(terms) => terms.clone(),
@@ -104,18 +134,52 @@ impl Expr {
         }
     }
 
-    pub fn to_fn(&self) -> (Vec<Expr>, Vec<Expr>) {
+    pub fn to_primitive(&self) -> primitives::Primitives {
         match self {
-            Expr::Fn { args, body, .. } => (args.clone(), body.clone()),
+            Expr::Primitives(p) => p.clone(),
+            any => panic!("Expected primitive, got: {:?}", any),
+        }
+    }
+
+    pub fn to_fn(&self) -> (Vec<Expr>, Vec<Expr>, String) {
+        match self {
+            Expr::Fn {
+                args,
+                body,
+                context_id,
+                name,
+            } => (args.clone(), body.clone(), context_id.clone()),
             _ => panic!("Expected function"),
         }
     }
-    pub fn to_identifier(&self) -> (String, Box<Expr>, String, String) {
+    pub fn to_var(&self) -> (String, Box<Expr>, String, String) {
         match self {
             Expr::Identifier {
                 name,
                 modifier,
                 expr,
+                context_id,
+            } => (
+                name.clone(),
+                expr.clone(),
+                modifier.clone(),
+                context_id.clone(),
+            ),
+            Expr::Assigment {
+                name,
+                expr,
+                modifier,
+                context_id,
+            } => (
+                name.clone(),
+                expr.clone(),
+                modifier.clone(),
+                context_id.clone(),
+            ),
+            Expr::VarDeclaration {
+                name,
+                expr,
+                modifier,
                 context_id,
             } => (
                 name.clone(),

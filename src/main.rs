@@ -65,7 +65,8 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             ident: _,
             expr,
         } => {
-            eval(*expr, var_pool);
+            let expr = *expr;
+            eval(expr, var_pool);
             primitives::Primitives::Void
         }
         ast::Expr::MonadicOp { verb, expr } => match verb {
@@ -226,16 +227,12 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             return terms.last().unwrap().to_owned();
         }
         ast::Expr::Print(value) => {
-            println!("{}", eval(*value, var_pool).to_string());
-            primitives::Primitives::Null
+            let expression = *value;
+            let expression = eval(expression, var_pool);
+            println!("{}", expression.to_string());
+            primitives::Primitives::Void
         }
         ast::Expr::Void => primitives::Primitives::Void,
-        ast::Expr::Fn {
-            args,
-            body,
-            context_id,
-            name,
-        } => primitives::Primitives::Void,
         ast::Expr::FnCall {
             name,
             args,
@@ -245,8 +242,11 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             for ele in args {
                 eval(ele, var_pool);
             }
-            println!("função {name} do contexto {context_id} foi executada");
-            eval(Expr::Terms(body), var_pool)
+            println!("{body:?}");
+
+            let result = eval(Expr::Terms(body), var_pool);
+            varpool::delete_context(var_pool, &context_id);
+            result
         }
         ast::Expr::Identifier {
             name,
@@ -257,14 +257,80 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             let var = varpool::get_var_value(var_pool, &name, &context_id);
             match var {
                 Ok(var) => {
-                    return eval(var.value, var_pool);
+                    println!("Chamou {name} contexto {context_id}");
+                    let value = eval(var.value, var_pool);
+                    varpool::delete_context(var_pool, &context_id);
+                    return value;
                 }
-                Err(_) => {
-                    let var = add_var(var_pool, &name, &modifier, &expr, &context_id);
-                    return eval(var.value, var_pool);
-                }
+                Err(_) => panic!("Variable {name} not found"),
             }
         }
+        Expr::Assigment {
+            name,
+            expr,
+            modifier,
+            context_id,
+        } => {
+            varpool::add_var(var_pool, &name, &modifier, &*expr, &context_id);
+            primitives::Primitives::Void
+        }
+        Expr::VarDeclaration {
+            name,
+            expr,
+            modifier,
+            context_id,
+        } => {
+            varpool::add_var(var_pool, &name, &modifier, &*expr, &context_id);
+            primitives::Primitives::Void
+        }
         Expr::Null => primitives::Primitives::Null,
+        Expr::Statments(stmt) => {
+            match stmt {
+                ast::Statments::For {
+                    variable,
+                    rule,
+                    body,
+                    context_id,
+                    step,
+                } => {
+                    let rule = eval(*rule, var_pool);
+                    let body = *body;
+                    let context_id = context_id.clone();
+                    let step = match step {
+                        Some(step_value) => {
+                            let value = eval(*step_value, var_pool);
+                            if value.is_number() {
+                                value
+                            } else {
+                                if value.is_void() {
+                                    primitives::Primitives::Number(1.0)
+                                } else {
+                                    panic!("Invalid step value {value:?}")
+                                }
+                            }
+                        }
+                        None => primitives::Primitives::Number(1.0),
+                    };
+
+                    for i in rule.to_array() {
+                        let mut var_pool = var_pool.clone();
+                        varpool::add_var(
+                            &mut var_pool,
+                            &variable.ident,
+                            "",
+                            &Expr::Primitives(i.clone()),
+                            &context_id,
+                        );
+                        let body = body.to_owned();
+                        for ele in body.to_terms() {
+                            eval(ele, &mut var_pool);
+                        }
+                    }
+                    varpool::delete_context(var_pool, &context_id);
+                }
+            }
+            primitives::Primitives::Void
+        }
+        _ => primitives::Primitives::Void,
     }
 }

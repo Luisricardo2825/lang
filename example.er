@@ -1,32 +1,7 @@
-let data = [
-	{
-		"name": "Mariam Hughes",
-		"phone": "(735) 265-9380",
-		"email": "sollicitudin.adipiscing.ligula@aol.edu"
-	},
-	{
-		"name": "Miriam Leach",
-		"phone": "1-827-857-9830",
-		"email": "interdum.enim@yahoo.ca"
-	},
-	{
-		"name": "Macon Lindsay",
-		"phone": "1-525-434-7786",
-		"email": "a.feugiat@outlook.couk"
-	}
-]
-let count = 0;
-
-fn runLoop(){
-	let ret = null
-	for item in data{
-		count++
-		ret = item
-	}
-	print(ret)
-	ret
+fn calc(a,b){
+	print("Teste1 "+a)
+	a
 }
 
-let item = runLoop();
-
-print("Ultimo item: "+item)
+const sum = calc(10,10)
+print("Teste2 "+sum)
