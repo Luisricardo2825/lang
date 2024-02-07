@@ -17,7 +17,7 @@ pub fn get_var_value(
     context_id: &str,
 ) -> Result<Variable, String> {
     let msg = format!(
-        "Variable {} not found. Context: {context_id} Pool:{:?}.",
+        "Could not find {}. Context: {context_id} Pool:{:?}.",
         ident, var_pool
     );
     if ident.contains("@") {
@@ -98,6 +98,51 @@ pub fn add_var(
                 return var_pool[index].clone();
             }
             None => add_var(var_pool, &ident, "let", expr, context_id),
+        }
+    }
+}
+
+pub fn search_in_all_contexts(var_pool: &mut Vec<Variable>, ident: &str) -> Option<Variable> {
+    let ident = String::from(ident);
+    let mut contexts = get_contexts(var_pool);
+    contexts.reverse();
+    for context in contexts {
+        let var = get_var(var_pool, &ident, &context);
+        if var.is_some() {
+            return var;
+        }
+    }
+    None
+}
+pub fn change_var_value(var_pool: &mut Vec<Variable>, ident: &str, expr: &Expr, context_id: &str) {
+    let ident = String::from(ident);
+    let var = get_var(var_pool, &ident, context_id);
+    match var {
+        Some(var) => {
+            let index = var_pool
+                .par_iter()
+                .position_any(|x| *x.ident == var.ident && x.context_id == context_id)
+                .unwrap();
+            var_pool[index].value = expr.to_owned();
+        }
+        None => {
+            let mut contexts = get_contexts(var_pool);
+            contexts.reverse();
+            println!("contexts: {contexts:?}");
+            for context in contexts {
+                let var = get_var(var_pool, &ident, &context);
+                if var.is_some() {
+                    let index = var_pool
+                        .par_iter()
+                        .position_any(|x| {
+                            *x.ident == var.clone().unwrap().ident && *x.context_id == context
+                        })
+                        .unwrap();
+                    var_pool[index].value = expr.to_owned();
+                    return;
+                }
+            }
+            panic!("\"{ident}\" not found")
         }
     }
 }

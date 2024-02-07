@@ -7,7 +7,9 @@ expr = {
   | assgmtExpr
   | unaryOperation
   | functions
+  | fnCall
   | keywords
+  | returnSTMT
   | monadicExpr
   | dyadicExpr
   | value
@@ -19,7 +21,6 @@ expr = {
 keywords = {
     forLoop
   | ifLogic
-  | fnCall
   | functionLogic
 }
 
@@ -35,6 +36,7 @@ stmt = {
   | "else if"
   | "else"
   | "fn"
+  | "return"
 }
 // Functions
 print = { "print" ~ "(" ~ code ~ ")" }
@@ -42,15 +44,23 @@ print = { "print" ~ "(" ~ code ~ ")" }
 // Keywords logic
 forLoop = { stmt ~ ident ~ "in" ~ expr ~ NEWLINE* ~ "{" ~ code ~ "}" }
 
-ifLogic = { "if" ~ ("(" ~ expr ~ ")" | expr) ~ (NEWLINE | WHITESPACE)* ~ block ~ ("else" ~ NEWLINE* ~ block)? }
+ifLogic   = { "if" ~ ("(" ~ expr ~ ")" | expr) ~ (NEWLINE | WHITESPACE)* ~ block ~ elseLogic? }
+elseLogic = { "else" ~ (NEWLINE | WHITESPACE)* ~ block }
 
-functionLogic = { stmt ~ ident ~ "(" ~ functionArgs? ~ ")" ~ NEWLINE* ~ block }
-fnCall        = { ident ~ "(" ~ functionArgs? ~ ")" }
-functionArgs  = { NEWLINE* ~ (code) ~ ("," ~ (code))* }
-argsList      = { NEWLINE* ~ (ident ~ "," ~ NEWLINE+)* ~ ident? }
+functionLogic       =  { functionDeclaration ~ block }
+functionDeclaration = _{ stmt ~ ident ~ "(" ~ functionArgs? ~ ")" }
+fnCall              = @{ ident ~ startArgs ~ functionArgs? ~ endArgs ~ (NEWLINE | WHITESPACE)* }
+functionArgs        =  { NEWLINE* ~ (code) ~ ("," ~ (code))* }
+argsList            =  { NEWLINE* ~ (ident ~ "," ~ NEWLINE+)* ~ ident? }
 
+startArgs = { (NEWLINE | WHITESPACE)* ~ "(" }
+endArgs   = { (NEWLINE | WHITESPACE)* ~ ")" }
+// Function block
+returnSTMT =  { (NEWLINE | WHITESPACE)* ~ stmt ~ (expr) ~ (NEWLINE | WHITESPACE)* }
+startBlock = _{ (NEWLINE | WHITESPACE)* ~ "{" }
+endBlock   = _{ (NEWLINE | WHITESPACE)* ~ "}" }
 // Code block
-block = _{ "{" ~ code  ~ "}" }
+block = _{ startBlock ~ code ~ endBlock }
 
 // expressions(Logic)
 monadicExpr = { verb ~ expr }
@@ -157,6 +167,6 @@ array = {
 // We can't have SOI and EOI on expr directly, because it is used recursively (e.g. with parentheses)
 // program = _{ SOI ~ expr ~ EOI }
 
-WHITESPACE = _{ " " | "\t" }
+WHITESPACE = _{ " " | "\t" | "\n\r" | "\n" }
 
 COMMENT = _{ "//" ~ (!"\n" ~ ANY)* }

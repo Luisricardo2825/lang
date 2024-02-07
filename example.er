@@ -1,7 +1,12 @@
-fn calc(a,b){
-	print("Teste1 "+a)
-	a
+fn returnValue(a){
+	return a;
 }
+fn sum(a,b,c){
+	let c = returnValue(c);
+	return "Resultado: "+a+b+c
+}
+let v1 = 10;
 
-const sum = calc(10,10)
-print("Teste2 "+sum)
+const sum = sum(v1,10,10);
+print(sum);
+returnValue(10);

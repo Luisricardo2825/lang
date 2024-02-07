@@ -5,7 +5,7 @@ mod primitives;
 mod varpool;
 
 use pest::Parser;
-use std::{io, time::Instant};
+use std::{env, io, time::Instant};
 use varpool::add_var;
 
 use crate::ast::Expr;
@@ -17,6 +17,7 @@ pub struct LangParser;
 mod ast_parser;
 
 fn main() -> io::Result<()> {
+    env::set_var("RUST_BACKTRACE", "1");
     let now = Instant::now();
     let mut var_pool: Vec<varpool::Variable> = vec![];
     let unparsed_file = std::fs::read_to_string("example.er").expect("cannot read jsc file");
@@ -28,6 +29,7 @@ fn main() -> io::Result<()> {
         }
 
         let exprs = ast_parser::resolve_rule(pair, &mut var_pool, "global");
+
         eval(exprs, &mut var_pool);
     }
 
@@ -242,7 +244,6 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             for ele in args {
                 eval(ele, var_pool);
             }
-            println!("{body:?}");
 
             let result = eval(Expr::Terms(body), var_pool);
             varpool::delete_context(var_pool, &context_id);
@@ -254,16 +255,13 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             modifier,
             context_id,
         } => {
-            let var = varpool::get_var_value(var_pool, &name, &context_id);
-            match var {
-                Ok(var) => {
-                    println!("Chamou {name} contexto {context_id}");
-                    let value = eval(var.value, var_pool);
-                    varpool::delete_context(var_pool, &context_id);
-                    return value;
-                }
-                Err(_) => panic!("Variable {name} not found"),
-            }
+            let vars = varpool::get_all_vars_from_context(var_pool, &context_id);
+            let var = vars
+                .into_iter()
+                .find(|x| x.ident == name)
+                .unwrap_or(varpool::search_in_all_contexts(var_pool, &name).unwrap());
+            let value = eval(var.value, var_pool);
+            return value;
         }
         Expr::Assigment {
             name,
@@ -271,7 +269,9 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             modifier,
             context_id,
         } => {
-            varpool::add_var(var_pool, &name, &modifier, &*expr, &context_id);
+            let value = *expr;
+
+            varpool::change_var_value(var_pool, &name, &value, &context_id);
             primitives::Primitives::Void
         }
         Expr::VarDeclaration {
@@ -280,7 +280,8 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
             modifier,
             context_id,
         } => {
-            varpool::add_var(var_pool, &name, &modifier, &*expr, &context_id);
+            let value = *expr;
+            varpool::add_var(var_pool, &name, &modifier, &value, &context_id);
             primitives::Primitives::Void
         }
         Expr::Null => primitives::Primitives::Null,
@@ -330,6 +331,15 @@ fn eval(expr: ast::Expr, var_pool: &mut Vec<varpool::Variable>) -> primitives::P
                 }
             }
             primitives::Primitives::Void
+        }
+        Expr::Return {
+            expr,
+            context_id,
+            stmt,
+        } => {
+            let value = eval(*expr, var_pool);
+            varpool::delete_context(var_pool, &context_id);
+            return value;
         }
         _ => primitives::Primitives::Void,
     }

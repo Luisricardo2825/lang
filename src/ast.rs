@@ -44,6 +44,11 @@ pub enum Expr {
         modifier: String,
         context_id: String,
     },
+    FunctionArg {
+        name: String,
+        func_name: String,
+        context_id: String,
+    },
     Assigment {
         name: String,
         expr: Box<Expr>,
@@ -89,6 +94,11 @@ pub enum Expr {
     Statments(Statments),
     Void,
     Null,
+    Return {
+        expr: Box<Expr>,
+        context_id: String,
+        stmt: String,
+    },
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -187,6 +197,17 @@ impl Expr {
                 modifier.clone(),
                 context_id.clone(),
             ),
+            _ => panic!("Expected identifier"),
+        }
+    }
+
+    pub fn to_arg(&self) -> (String, String, String) {
+        match self {
+            Expr::FunctionArg {
+                name,
+                func_name,
+                context_id,
+            } => (name.clone(), context_id.clone(), func_name.clone()),
             _ => panic!("Expected identifier"),
         }
     }

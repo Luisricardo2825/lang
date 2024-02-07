@@ -22,7 +22,7 @@ impl Primitives {
             Primitives::Array(value) => serialize_jsonvalue(&Primitives::Array(value.to_owned())),
             Primitives::Object(value) => serialize_jsonvalue(&Primitives::Object(value.to_owned())),
             Primitives::Null => "null".to_owned(),
-            Primitives::Void => "".to_owned(),
+            Primitives::Void => panic!("Void cannot be string"),
         }
     }
 
@@ -134,7 +134,7 @@ impl Primitives {
             _ => false,
         }
     }
-    
+
     pub fn set_value(&mut self, value: Primitives) {
         *self = value;
     }

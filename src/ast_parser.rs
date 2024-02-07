@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::varpool::{add_var, Variable};
+use crate::varpool::{add_var, get_from_global, Variable};
 
 use super::LangParser;
 use super::{ast::*, dyadic_expr, monadic_expr, primitives, varpool};
@@ -242,6 +242,7 @@ pub(crate) fn resolve_rule(
             // get value from var_pool
             let ident = primary.as_str();
             let ident = ident.trim();
+
             let var = varpool::get_var_value(var_pool, ident, context_id);
             if var.is_err() {
                 panic!("Variable {} doesn't exist", ident)
@@ -407,21 +408,21 @@ pub(crate) fn resolve_rule(
 
             for arg in args {
                 let argument = resolve_rule(arg, var_pool, &local_context);
-                body_exprs.push(argument);
+                if !argument.is_void() {
+                    body_exprs.push(argument);
+                }
             }
 
             let vars = varpool::get_all_vars_from_context(var_pool, &local_context);
-            println!("vars: {vars:?}");
             for ele in vars {
                 let var = ele;
-                let name = var.ident.clone();
+                let ident = var.ident.clone();
                 let expr = var.value.clone();
                 let context_id = var.context_id.clone();
-                let var = varpool::add_var(var_pool, &name, "", &expr, &context_id);
-                let expr = Expr::VarDeclaration {
+                let var = varpool::add_var(var_pool, &ident, "", &expr, &context_id);
+                let expr = Expr::FunctionArg {
                     name: var.ident,
-                    expr: Box::new(var.value),
-                    modifier: "".to_owned(),
+                    func_name: name.clone(),
                     context_id: var.context_id,
                 };
                 arguments.push(expr)
@@ -439,14 +440,17 @@ pub(crate) fn resolve_rule(
             func
         }
         Rule::fnCall => {
-            let mut pairs = primary.into_inner();
+            let (name, str_args) = primary.as_str().split_once("(").unwrap();
 
-            let name = pairs.next().unwrap().as_str();
+            let name = name.trim();
+            let name = name.to_owned();
+            let str_args = str_args.trim();
+            let mut str_args = str_args.to_owned();
+            str_args.pop();
 
-            let args_values = pairs.next().unwrap().as_str();
             let body = varpool::get_var_value(var_pool, &name, context_id).unwrap();
             let (args, body, context_id) = body.value.to_fn();
-            let concated = "[".to_owned() + args_values + "]";
+            let concated = "[".to_owned() + &str_args + "]";
 
             let args_pair = LangParser::parse(Rule::program, &concated).unwrap();
 
@@ -456,7 +460,6 @@ pub(crate) fn resolve_rule(
                 if str.len() <= 0 {
                     continue;
                 }
-
                 args_expr = resolve_rule(pair, var_pool, &context_id);
             }
 
@@ -465,18 +468,19 @@ pub(crate) fn resolve_rule(
             let mut terms = vec![];
             let mut index = 0;
             for ele in args {
-                let var = ele.to_var();
+                let (arg_name, arg_context_id, ..) = ele.to_arg();
                 let value = args_values.get(index);
+
                 if value.is_some() {
                     let value =
                         Box::new(Expr::Primitives(args_values.get(index).unwrap().to_owned()));
                     let expr = Expr::Assigment {
-                        name: var.0.clone(),
+                        name: arg_name.clone(),
                         expr: value.clone(),
                         modifier: "const".to_owned(),
-                        context_id: context_id.clone(),
+                        context_id: arg_context_id.clone(),
                     };
-                    varpool::add_var(var_pool, &var.0, "const", &value, &context_id);
+                    varpool::add_var(var_pool, &arg_name, "const", &value, &arg_context_id);
                     terms.push(expr);
                 }
                 index += 1;
@@ -510,6 +514,17 @@ pub(crate) fn resolve_rule(
         }
         Rule::null => Expr::Null,
         Rule::EOI => Expr::Void,
+        Rule::returnSTMT => {
+            let mut pairs = primary.into_inner();
+            let stmt = pairs.next().unwrap().as_str().to_string();
+            let expr = pairs.next().unwrap();
+            let expr = resolve_rule(expr, var_pool, context_id);
+            Expr::Return {
+                expr: Box::new(expr),
+                context_id: context_id.to_owned(),
+                stmt,
+            }
+        }
         rule => unreachable!("Expr::parse expected atom, found {:?}", rule),
     }
 }
